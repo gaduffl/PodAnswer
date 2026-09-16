@@ -33,11 +33,13 @@ class GeminiClient {
     ): PodcastAnalysis {
         onStage(JobStage.UPLOADING, "Audio wird zu Gemini hochgeladen …")
         val uploaded = uploadFile(apiKey, audio)
-        val active = waitUntilActive(apiKey, uploaded.first, uploaded.second)
-        onStage(JobStage.PROCESSING, "Podcast wird transkribiert und ausgewertet …")
-        val result = generate(apiKey, active.second, episode)
-        runCatching { deleteFile(apiKey, uploaded.first) }
-        return result
+        return try {
+            val active = waitUntilActive(apiKey, uploaded.first, uploaded.second)
+            onStage(JobStage.PROCESSING, "Podcast wird transkribiert und ausgewertet …")
+            generate(apiKey, active.second, episode)
+        } finally {
+            runCatching { deleteFile(apiKey, uploaded.first) }
+        }
     }
 
     private suspend fun uploadFile(apiKey: String, file: File): Pair<String, String> {
@@ -101,6 +103,9 @@ class GeminiClient {
                 .put("type", "text")
                 .put("mime_type", "application/json")
                 .put("schema", responseSchema()))
+            put("generation_config", JSONObject()
+                .put("max_output_tokens", 65_536)
+                .put("thinking_level", "low"))
         }.toString()
         val request = Request.Builder()
             .url("https://generativelanguage.googleapis.com/v1beta/interactions")
@@ -109,23 +114,67 @@ class GeminiClient {
             .build()
         client.newCall(request).await().use { response ->
             if (!response.isSuccessful) throw apiError(response)
-            return parseAnalysis(extractOutput(JSONObject(response.body?.string().orEmpty())))
+            val raw = response.body?.string().orEmpty()
+            if (raw.isBlank()) throw IOException("Gemini hat eine leere Antwort zurückgegeben.")
+            return parseAnalysis(extractOutput(JSONObject(raw)))
         }
     }
 
-    private fun extractOutput(envelope: JSONObject): JSONObject {
+    internal fun extractOutput(envelope: JSONObject): JSONObject {
+        val status = envelope.optString("status")
+        when (status) {
+            "failed" -> {
+                val message = envelope.optJSONObject("error")?.optString("message")
+                    ?.takeIf { it.isNotBlank() }
+                    ?: "Die Verarbeitung ist bei Gemini fehlgeschlagen."
+                throw IOException(message)
+            }
+            "incomplete" -> throw IOException("Gemini hat nur ein unvollständiges Ergebnis erzeugt. Bitte erneut versuchen.")
+            "budget_exceeded" -> throw IOException("Das Gemini-Tokenbudget für diese Analyse wurde überschritten.")
+            "queued", "in_progress" -> throw IOException("Gemini hat die Analyse noch nicht abgeschlossen. Bitte erneut versuchen.")
+        }
         if (envelope.has("summary")) return envelope
-        envelope.optString("output_text").takeIf { it.isNotBlank() }?.let { return JSONObject(it) }
+        envelope.optString("output_text").takeIf { it.isNotBlank() }?.let { return parseJsonObject(it) }
         envelope.optJSONObject("interaction")?.let { return extractOutput(it) }
+
+        // Current Interactions API response shape:
+        // steps[] -> { type: "model_output", content[] -> { type: "text", text: "..." } }
+        envelope.optJSONArray("steps")?.let { steps ->
+            val text = buildString {
+                for (stepIndex in 0 until steps.length()) {
+                    val step = steps.optJSONObject(stepIndex) ?: continue
+                    if (step.optString("type") != "model_output") continue
+                    val content = step.optJSONArray("content") ?: continue
+                    for (contentIndex in 0 until content.length()) {
+                        val item = content.optJSONObject(contentIndex) ?: continue
+                        if (item.optString("type") == "text") append(item.optString("text"))
+                    }
+                }
+            }
+            if (text.isNotBlank()) return parseJsonObject(text)
+        }
+
         val outputs = envelope.optJSONArray("outputs") ?: envelope.optJSONArray("output")
         if (outputs != null) {
             for (index in 0 until outputs.length()) {
                 val item = outputs.optJSONObject(index) ?: continue
-                item.optString("text").takeIf { it.isNotBlank() }?.let { return JSONObject(it) }
-                item.optJSONObject("content")?.optString("text")?.takeIf { it.isNotBlank() }?.let { return JSONObject(it) }
+                item.optString("text").takeIf { it.isNotBlank() }?.let { return parseJsonObject(it) }
+                item.optJSONObject("content")?.optString("text")?.takeIf { it.isNotBlank() }?.let { return parseJsonObject(it) }
             }
         }
         throw IOException("Gemini hat kein auswertbares Ergebnis zurückgegeben.")
+    }
+
+    private fun parseJsonObject(value: String): JSONObject {
+        val trimmed = value.trim()
+        val withoutFence = if (trimmed.startsWith("```")) {
+            trimmed.removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+        } else trimmed
+        return try {
+            JSONObject(withoutFence)
+        } catch (error: Exception) {
+            throw IOException("Gemini hat kein gültiges JSON-Ergebnis zurückgegeben.", error)
+        }
     }
 
     private fun buildPrompt(e: SharedEpisode) = """
