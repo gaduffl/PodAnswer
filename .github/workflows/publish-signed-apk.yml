@@ -1,13 +1,8 @@
 name: Publish signed APK
-# The temporary main/path trigger is removed after the first verified artifact.
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/publish-signed-apk.yml"
     tags:
       - "v*"
 
