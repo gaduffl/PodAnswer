@@ -26,9 +26,11 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -228,13 +230,14 @@ private fun MetadataChip(label: String, value: String) {
 private fun DetailScreen(record: EpisodeRecord, onBack: () -> Unit, onRetry: () -> Unit, onDelete: () -> Unit, onShare: () -> Unit) {
     var tab by remember { mutableIntStateOf(0) }
     var confirmDelete by remember { mutableStateOf(false) }
+    val player = rememberAudioPlayer(record.episode.localAudioPath)
     Scaffold(topBar = { TopAppBar(title = { Text(record.episode.podcast.ifBlank { "Analyse" }, maxLines = 1, overflow = TextOverflow.Ellipsis) }, navigationIcon = {
         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Zurück") }
     }, actions = {
         if (record.analysis != null) IconButton(onClick = onShare) { Icon(Icons.Default.Share, "Teilen") }
         IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, "Löschen") }
     }) }) { padding ->
-        Column(Modifier.padding(padding)) {
+        Column(Modifier.padding(padding).fillMaxSize()) {
             Column(Modifier.padding(horizontal = 18.dp, vertical = 8.dp)) {
                 Text(record.episode.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             }
@@ -246,7 +249,10 @@ private fun DetailScreen(record: EpisodeRecord, onBack: () -> Unit, onRetry: () 
                         Tab(tab == 0, { tab = 0 }, text = { Text("Antworten") })
                         Tab(tab == 1, { tab = 1 }, text = { Text("Transkript") })
                     }
-                    if (tab == 0) AnswersTab(record) else TranscriptTab(record)
+                    Box(Modifier.weight(1f)) {
+                        if (tab == 0) AnswersTab(record, player) else TranscriptTab(record, player)
+                    }
+                    AudioPlaybackBar(player)
                 }
             }
         }
@@ -282,9 +288,8 @@ private fun ErrorPanel(error: String, onRetry: () -> Unit) {
 }
 
 @Composable
-private fun AnswersTab(record: EpisodeRecord) {
+private fun AnswersTab(record: EpisodeRecord, player: AudioPlayerControls) {
     val analysis = record.analysis ?: return
-    val player = rememberAudioPlayer(record.episode.localAudioPath)
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
             Text("Kurzfassung", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
@@ -300,8 +305,11 @@ private fun AnswersTab(record: EpisodeRecord) {
                     }
                     topic.evidence.forEach { evidence ->
                         HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Mist)
-                        Row(Modifier.clickable { player(evidence.timestampSeconds) }, verticalAlignment = Alignment.Top) {
-                            Icon(Icons.Default.PlayArrow, null, tint = Teal, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(6.dp))
+                        val isCurrent = player.activeSeconds == evidence.timestampSeconds
+                        Row(Modifier.clickable {
+                            if (isCurrent) player.togglePause() else player.playFrom(evidence.timestampSeconds)
+                        }, verticalAlignment = Alignment.Top) {
+                            Icon(if (isCurrent && player.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Teal, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(6.dp))
                             Column { Text(formatTime(evidence.timestampSeconds), color = Teal, style = MaterialTheme.typography.labelMedium); Text("„${evidence.quote}“", style = MaterialTheme.typography.bodySmall) }
                         }
                     }
@@ -313,15 +321,17 @@ private fun AnswersTab(record: EpisodeRecord) {
 }
 
 @Composable
-private fun TranscriptTab(record: EpisodeRecord) {
+private fun TranscriptTab(record: EpisodeRecord, player: AudioPlayerControls) {
     val transcript = record.analysis?.transcript.orEmpty()
-    val player = rememberAudioPlayer(record.episode.localAudioPath)
     var query by remember { mutableStateOf("") }
     val visible = remember(query, transcript) { if (query.isBlank()) transcript else transcript.filter { it.text.contains(query, true) || it.speaker.contains(query, true) } }
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { OutlinedTextField(query, { query = it }, label = { Text("Transkript durchsuchen") }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp), singleLine = true) }
         items(visible) { segment ->
-            Row(Modifier.fillMaxWidth().clickable { player(segment.startSeconds) }.padding(vertical = 4.dp), verticalAlignment = Alignment.Top) {
+            val isCurrent = player.activeSeconds == segment.startSeconds
+            Row(Modifier.fillMaxWidth().clickable {
+                if (isCurrent) player.togglePause() else player.playFrom(segment.startSeconds)
+            }.padding(vertical = 4.dp), verticalAlignment = Alignment.Top) {
                 Text(formatTime(segment.startSeconds), color = Teal, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(54.dp))
                 Column { Text(segment.speaker, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium); Text(segment.text) }
             }
@@ -330,11 +340,86 @@ private fun TranscriptTab(record: EpisodeRecord) {
     }
 }
 
+private data class AudioPlayerControls(
+    val isAvailable: Boolean,
+    val activeSeconds: Int?,
+    val isPlaying: Boolean,
+    val playFrom: (Int) -> Unit,
+    val togglePause: () -> Unit,
+    val stop: () -> Unit,
+)
+
 @Composable
-private fun rememberAudioPlayer(path: String?): (Int) -> Unit {
-    val player = remember(path) { path?.takeIf { File(it).exists() }?.let { MediaPlayer().apply { setDataSource(it); prepare() } } }
-    DisposableEffect(player) { onDispose { player?.release() } }
-    return { seconds -> player?.apply { seekTo(seconds * 1000); start() } }
+private fun rememberAudioPlayer(path: String?): AudioPlayerControls {
+    var isPlaying by remember(path) { mutableStateOf(false) }
+    var activeSeconds by remember(path) { mutableStateOf<Int?>(null) }
+    val player = remember(path) {
+        path?.takeIf { File(it).exists() }?.let { audioPath ->
+            runCatching {
+                MediaPlayer().apply {
+                    setDataSource(audioPath)
+                    prepare()
+                    setOnCompletionListener {
+                        isPlaying = false
+                        activeSeconds = null
+                    }
+                }
+            }.getOrNull()
+        }
+    }
+    DisposableEffect(player) { onDispose { runCatching { player?.release() } } }
+    return AudioPlayerControls(
+        isAvailable = player != null,
+        activeSeconds = activeSeconds,
+        isPlaying = isPlaying,
+        playFrom = { seconds ->
+            player?.apply {
+                seekTo(seconds * 1000)
+                start()
+                activeSeconds = seconds
+                isPlaying = true
+            }
+        },
+        togglePause = {
+            player?.let {
+                if (activeSeconds != null) {
+                    if (it.isPlaying) {
+                        it.pause()
+                        isPlaying = false
+                    } else {
+                        it.start()
+                        isPlaying = true
+                    }
+                }
+            }
+        },
+        stop = {
+            player?.let {
+                if (it.isPlaying) it.pause()
+                activeSeconds = null
+                isPlaying = false
+            }
+        },
+    )
+}
+
+@Composable
+private fun AudioPlaybackBar(player: AudioPlayerControls) {
+    val startSeconds = player.activeSeconds ?: return
+    Surface(color = Mist, tonalElevation = 2.dp) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(if (player.isPlaying) "Wiedergabe läuft" else "Wiedergabe pausiert", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge)
+                Text("Snippet ab ${formatTime(startSeconds)}", style = MaterialTheme.typography.labelSmall, color = Ink.copy(alpha = .65f))
+            }
+            IconButton(onClick = player.togglePause, enabled = player.isAvailable) {
+                Icon(if (player.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, if (player.isPlaying) "Pausieren" else "Fortsetzen")
+            }
+            IconButton(onClick = player.stop, enabled = player.isAvailable) {
+                Icon(Icons.Default.Stop, "Wiedergabe stoppen")
+            }
+        }
+    }
 }
 
 @Composable
