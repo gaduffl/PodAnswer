@@ -1,0 +1,95 @@
+name: Publish signed APK
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: signed-apk-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-release:
+    name: Build and verify release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/podanswer-release.jks
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Validate signing secrets
+        shell: bash
+        run: |
+          for secret_name in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!secret_name:-}" ]; then
+              echo "Missing required repository secret: $secret_name" >&2
+              exit 1
+            fi
+          done
+
+      - name: Restore release keystore
+        shell: bash
+        run: printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+
+      - name: Run tests and build signed release
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon testReleaseUnitTest assembleRelease
+
+      - name: Verify APK signature
+        shell: bash
+        run: |
+          APK_PATH="app/build/outputs/apk/release/app-release.apk"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -n "$APKSIGNER"
+          "$APKSIGNER" verify --verbose --print-certs "$APK_PATH"
+
+      - name: Prepare published files
+        shell: bash
+        run: |
+          mkdir -p release
+          VERSION="${GITHUB_REF_NAME:-manual}"
+          if [ "$VERSION" = "main" ] || [ "$VERSION" = "master" ]; then VERSION="manual-${GITHUB_RUN_NUMBER}"; fi
+          cp app/build/outputs/apk/release/app-release.apk "release/PodAnswer-${VERSION}.apk"
+          cd release
+          sha256sum "PodAnswer-${VERSION}.apk" > "PodAnswer-${VERSION}.apk.sha256"
+
+      - name: Upload signed APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PodAnswer-signed-release
+          path: release/*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release/* --generate-notes --title "PodAnswer $GITHUB_REF_NAME"

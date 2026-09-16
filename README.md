@@ -1,1 +1,60 @@
 # PodAnswer
+
+PodAnswer is an Android app for sharing podcast episodes from Podcast Republic, transcribing the MP3 with Gemini 3.8 Flash, and answering the questions or themes promised by the episode title.
+
+## What works
+
+- Receives Podcast Republic's `text/plain` share payload.
+- Extracts title, show, duration, publication date, episode URL, MP3 URL, description, and RSS URL.
+- Also accepts a directly shared or manually selected audio file.
+- Downloads the MP3 and sends it to the Gemini Files API.
+- Requests a timestamped, speaker-labelled transcript and evidence-based answers in structured JSON.
+- Labels each title topic as answered, partly answered, or unanswered.
+- Plays the local audio from every evidence or transcript timestamp.
+- Saves the analysis and audio locally, supports transcript search, retry, deletion, and text export.
+- Encrypts the Gemini API key with Android Keystore.
+
+## Build
+
+Requirements: Android Studio with JDK 17 and Android SDK 35.
+
+1. Open this directory in Android Studio.
+2. Let Gradle sync and install requested SDK components.
+3. Run the `app` configuration on Android 10 or newer.
+
+The included wrapper uses Gradle 8.9. No API key is included in the source.
+
+## Signed release builds
+
+Release builds require the following environment variables and fail if signing is missing:
+
+- `ANDROID_KEYSTORE_PATH`
+- `ANDROID_KEYSTORE_PASSWORD`
+- `ANDROID_KEY_ALIAS`
+- `ANDROID_KEY_PASSWORD`
+
+The GitHub Actions workflow reads the same values from repository secrets. It runs only when started manually or when a `v*` tag is pushed, so ordinary source-code pushes consume no Actions minutes. A manual workflow run publishes a verified, signed release APK as the `PodAnswer-signed-release` workflow artifact with seven-day retention. Pushing a tag such as `v0.1.0` additionally creates a GitHub Release containing the APK and SHA-256 checksum.
+
+The release key must be retained permanently. Future APK updates must be signed with the same key to install over an earlier version.
+
+## First use
+
+1. Create a Gemini API key in Google AI Studio.
+2. Open PodAnswer settings and save the key.
+3. In Podcast Republic, share an episode and select PodAnswer.
+4. Verify the detected title and select **Podcast analysieren**.
+
+The audio is sent to Google's Gemini API. After a successful analysis, PodAnswer requests deletion of the uploaded Gemini file. The downloaded MP3 and generated result remain in the app's private local storage until the analysis is deleted.
+
+## Architecture
+
+- Kotlin and Jetpack Compose
+- Single activity with Android share intents
+- Local JSON repository with atomic writes
+- OkHttp for podcast download and Gemini REST calls
+- Android Keystore backed AES-GCM storage for the API key
+- Android `MediaPlayer` for timestamp playback
+
+## Current operational limit
+
+The analysis coroutine runs in the app process. Keep the app open while a podcast is being processed. If Android stops the process, open the failed item and retry; an existing MP3 is reused.
