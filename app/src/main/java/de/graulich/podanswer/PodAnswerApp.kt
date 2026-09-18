@@ -20,7 +20,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -35,6 +37,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -114,6 +117,7 @@ fun PodAnswerApp(viewModel: PodAnswerViewModel) {
         if (state.settingsOpen) SettingsDialog(
             configured = state.apiKeyConfigured,
             defaultContext = state.defaultContext,
+            interestingFactsEnabled = state.interestingFactsEnabled,
             onDismiss = { viewModel.openSettings(false) },
             onSave = viewModel::saveSettings,
         )
@@ -439,7 +443,12 @@ private fun StatusPill(stage: JobStage) {
 
 @Composable
 private fun StatusLabel(status: String) {
-    val color = when (status) { "Beantwortet" -> Teal; "Nicht beantwortet" -> Coral; else -> Color(0xFF9A6A13) }
+    val color = when (status) {
+        "Beantwortet" -> Teal
+        "Nicht beantwortet" -> Coral
+        "Interessanter Fakt" -> Color(0xFF6750A4)
+        else -> Color(0xFF9A6A13)
+    }
     Text(status, color = color, style = MaterialTheme.typography.labelSmall, modifier = Modifier.background(color.copy(alpha = .12f), RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 4.dp))
 }
 
@@ -447,16 +456,18 @@ private fun StatusLabel(status: String) {
 private fun SettingsDialog(
     configured: Boolean,
     defaultContext: String,
+    interestingFactsEnabled: Boolean,
     onDismiss: () -> Unit,
-    onSave: (String, String) -> Unit,
+    onSave: (String, String, Boolean) -> Unit,
 ) {
     var key by remember { mutableStateOf("") }
     var context by remember(defaultContext) { mutableStateOf(defaultContext) }
+    var includeInterestingFacts by remember(interestingFactsEnabled) { mutableStateOf(interestingFactsEnabled) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Einstellungen") },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text(if (configured) "Ein API-Schlüssel ist bereits gespeichert. Ein neuer Eintrag ersetzt ihn." else "Füge deinen Gemini-API-Schlüssel aus Google AI Studio ein.")
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
@@ -484,10 +495,34 @@ private fun SettingsDialog(
                     minLines = 4,
                     maxLines = 8,
                 )
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        includeInterestingFacts = !includeInterestingFacts
+                    },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = includeInterestingFacts,
+                        onCheckedChange = { includeInterestingFacts = it },
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text("Interessante Fakten", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Zusätzliche Karten für Fakten, die wegen deines persönlichen Kontexts relevant sind.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Ink.copy(alpha = .7f),
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
-            Button(onClick = { onSave(key, context) }, enabled = configured || key.isNotBlank()) {
+            Button(
+                onClick = { onSave(key, context, includeInterestingFacts) },
+                enabled = configured || key.isNotBlank(),
+            ) {
                 Text("Speichern")
             }
         },

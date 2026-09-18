@@ -45,6 +45,7 @@ class GeminiClientTest {
             SharedEpisode(title = "Folge"),
             durationMillis = 3_723_456,
             defaultContext = "",
+            interestingFactsEnabled = false,
         )
 
         assertTrue(prompt.contains("exakt 3723.456 Sekunden lang"))
@@ -58,11 +59,27 @@ class GeminiClientTest {
             SharedEpisode(title = "Folge"),
             durationMillis = null,
             defaultContext = "Achte besonders auf Risiken und offene Fragen.",
+            interestingFactsEnabled = false,
         )
 
         assertTrue(prompt.contains("<standard_context>"))
         assertTrue(prompt.contains("Achte besonders auf Risiken und offene Fragen."))
         assertTrue(prompt.contains("Themenauswahl, Kurzfassung, Antworten und Einordnung"))
+        assertTrue(prompt.contains("Der Standard-Kontext beeinflusst trotzdem weiterhin"))
+    }
+
+    @Test
+    fun promptRequestsSeparateInterestingFactsOnlyWhenEnabled() {
+        val prompt = client.buildPrompt(
+            SharedEpisode(title = "Folge"),
+            durationMillis = null,
+            defaultContext = "Achte besonders auf Risiken.",
+            interestingFactsEnabled = true,
+        )
+
+        assertTrue(prompt.contains("status: exakt „Interessanter Fakt“"))
+        assertTrue(prompt.contains("wiederhole keine Inhalte"))
+        assertTrue(prompt.contains("Achte besonders auf Risiken."))
     }
 
     @Test

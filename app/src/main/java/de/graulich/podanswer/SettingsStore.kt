@@ -11,7 +11,14 @@ class SettingsStore(context: Context) {
         prefs.edit().putString(DEFAULT_CONTEXT, value).apply()
     }
 
+    fun readInterestingFactsEnabled(): Boolean = prefs.getBoolean(INTERESTING_FACTS, false)
+
+    fun saveInterestingFactsEnabled(value: Boolean) {
+        prefs.edit().putBoolean(INTERESTING_FACTS, value).apply()
+    }
+
     private companion object {
         const val DEFAULT_CONTEXT = "default_context"
+        const val INTERESTING_FACTS = "interesting_facts_enabled"
     }
 }
