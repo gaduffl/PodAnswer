@@ -244,7 +244,7 @@ class GeminiClient {
 
             1. Transkribiere die gesamte Audiodatei möglichst wortgetreu in sinnvollen Segmenten mit Start- und Endzeit in Sekunden. Erkenne verschiedene Sprecher neutral als „Sprecher 1“, „Sprecher 2“ usw. Markiere unverständliche Passagen mit [unverständlich].
             2. Leite nur Fragen und Themen ab, die Titel, Beschreibung oder Standard-Kontext tatsächlich vorgeben. Erfinde keine konkreten Fragen für vage Formulierungen.
-            3. Beantworte jedes Thema ausschließlich anhand der Audiodatei. Gib den Status exakt als „Beantwortet“, „Teilweise beantwortet“ oder „Nicht beantwortet“ an.
+            3. Beantworte jedes Frage-Thema ausschließlich anhand der Audiodatei. Gib für Frage-Themen den Status exakt als „Beantwortet“, „Teilweise beantwortet“ oder „Nicht beantwortet“ an.
             4. Führe relevante Einschränkungen, Gegenargumente und Unsicherheiten unter nuance auf.
             5. Belege jede inhaltliche Antwort mit bis zu drei kurzen, wortgetreuen Transkriptausschnitten und ihrer absoluten Zeit in Sekunden. Wenn es keinen Beleg gibt, verwende eine leere Belegliste.
             6. Stelle Aussagen der Sprecher als Aussagen der Sprecher dar. Führe keinen externen Faktencheck durch.
