@@ -39,6 +39,7 @@ class PodAnswerViewModel(application: Application) : AndroidViewModel(applicatio
             records = initialRecords,
             apiKeyConfigured = keyStore.hasKey(),
             defaultContext = settingsStore.readDefaultContext(),
+            interestingFactsEnabled = settingsStore.readInterestingFactsEnabled(),
         )
     )
     val state: StateFlow<AppState> = _state.asStateFlow()
@@ -75,14 +76,16 @@ class PodAnswerViewModel(application: Application) : AndroidViewModel(applicatio
     fun openRecord(id: String?) = _state.update { it.copy(selectedId = id, incoming = null) }
     fun openSettings(open: Boolean) = _state.update { it.copy(settingsOpen = open) }
 
-    fun saveSettings(apiKey: String, defaultContext: String) {
+    fun saveSettings(apiKey: String, defaultContext: String, interestingFactsEnabled: Boolean) {
         if (apiKey.isNotBlank()) keyStore.save(apiKey)
         val normalizedContext = defaultContext.trim()
         settingsStore.saveDefaultContext(normalizedContext)
+        settingsStore.saveInterestingFactsEnabled(interestingFactsEnabled)
         _state.update {
             it.copy(
                 apiKeyConfigured = keyStore.hasKey(),
                 defaultContext = normalizedContext,
+                interestingFactsEnabled = interestingFactsEnabled,
                 settingsOpen = false,
             )
         }
@@ -127,6 +130,7 @@ class PodAnswerViewModel(application: Application) : AndroidViewModel(applicatio
                 audio = audio,
                 episode = episodeWithAudio,
                 defaultContext = _state.value.defaultContext,
+                interestingFactsEnabled = _state.value.interestingFactsEnabled,
             ) { stage, message ->
                 _state.update { it.copy(busyStage = stage, busyMessage = message) }
                 updateRecord(id, persist = false) { it.copy(stage = stage) }

@@ -31,6 +31,7 @@ class GeminiClient {
         audio: File,
         episode: SharedEpisode,
         defaultContext: String,
+        interestingFactsEnabled: Boolean,
         onStage: (JobStage, String) -> Unit,
     ): PodcastAnalysis {
         onStage(JobStage.UPLOADING, "Audio wird zu Gemini hochgeladen …")
@@ -39,7 +40,7 @@ class GeminiClient {
         return try {
             val active = waitUntilActive(apiKey, uploaded.first, uploaded.second)
             onStage(JobStage.PROCESSING, "Podcast wird transkribiert und ausgewertet …")
-            generate(apiKey, active.second, episode, durationMillis, defaultContext)
+            generate(apiKey, active.second, episode, durationMillis, defaultContext, interestingFactsEnabled)
         } finally {
             runCatching { deleteFile(apiKey, uploaded.first) }
         }
@@ -101,8 +102,9 @@ class GeminiClient {
         episode: SharedEpisode,
         durationMillis: Long?,
         defaultContext: String,
+        interestingFactsEnabled: Boolean,
     ): PodcastAnalysis {
-        val prompt = buildPrompt(episode, durationMillis, defaultContext)
+        val prompt = buildPrompt(episode, durationMillis, defaultContext, interestingFactsEnabled)
         val body = JSONObject().apply {
             put("model", "gemini-3.8-flash")
             put("input", JSONArray()
@@ -190,6 +192,7 @@ class GeminiClient {
         e: SharedEpisode,
         durationMillis: Long?,
         defaultContext: String,
+        interestingFactsEnabled: Boolean,
     ): String {
         val timeline = durationMillis?.let {
             val durationSeconds = "%.3f".format(java.util.Locale.US, it / 1000.0)
@@ -209,6 +212,22 @@ class GeminiClient {
             Berücksichtige diesen Fokus in Themenauswahl, Kurzfassung, Antworten und Einordnung, ohne unbelegte Aussagen hinzuzufügen.
             """.trimIndent()
         }.orEmpty()
+        val interestingFacts = if (interestingFactsEnabled && defaultContext.isNotBlank()) {
+            """
+            Ergänze nach den Frage-Themen separate Einträge für besonders relevante Fakten aus dem Podcast, die durch den Standard-Kontext des Nutzers bedeutsam sind.
+            Verwende für diese Einträge:
+            - question: eine kurze, aussagekräftige Überschrift, nicht als Frage formuliert
+            - status: exakt „Interessanter Fakt“
+            - answer: eine knappe Zusammenfassung des Fakts und seiner Relevanz für den Standard-Kontext
+            - nuance: wichtige Einschränkungen oder Unsicherheiten
+            - evidence: bis zu drei kurze, wortgetreue Belege mit absoluten Zeitstempeln
+            Nimm nur substanzielle, direkt belegte Fakten auf und wiederhole keine Inhalte, die bereits ein Frage-Thema beantworten.
+            """.trimIndent()
+        } else {
+            """
+            Erzeuge keine Einträge mit dem Status „Interessanter Fakt“. Der Standard-Kontext beeinflusst trotzdem weiterhin Themenauswahl, Kurzfassung, Antworten und Einordnung.
+            """.trimIndent()
+        }
 
         return """
             Du analysierst eine Podcastfolge. Antworte auf Deutsch; belasse das Transkript in der gesprochenen Originalsprache.
@@ -220,6 +239,8 @@ class GeminiClient {
             $timeline
 
             $focus
+
+            $interestingFacts
 
             1. Transkribiere die gesamte Audiodatei möglichst wortgetreu in sinnvollen Segmenten mit Start- und Endzeit in Sekunden. Erkenne verschiedene Sprecher neutral als „Sprecher 1“, „Sprecher 2“ usw. Markiere unverständliche Passagen mit [unverständlich].
             2. Leite nur Fragen und Themen ab, die Titel, Beschreibung oder Standard-Kontext tatsächlich vorgeben. Erfinde keine konkreten Fragen für vage Formulierungen.
@@ -250,7 +271,7 @@ class GeminiClient {
             .put("required", JSONArray(listOf("timestampSeconds", "quote")))
         val topic = JSONObject().put("type", "object")
             .put("properties", JSONObject().put("question", string()).put("status", JSONObject().put("type", "string")
-                .put("enum", JSONArray(listOf("Beantwortet", "Teilweise beantwortet", "Nicht beantwortet"))))
+                .put("enum", JSONArray(listOf("Beantwortet", "Teilweise beantwortet", "Nicht beantwortet", "Interessanter Fakt"))))
                 .put("answer", string()).put("nuance", string())
                 .put("evidence", JSONObject().put("type", "array").put("items", evidence)))
             .put("required", JSONArray(listOf("question", "status", "answer", "nuance", "evidence")))

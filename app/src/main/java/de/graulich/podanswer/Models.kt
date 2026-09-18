@@ -58,5 +58,6 @@ data class AppState(
     val busyMessage: String = "",
     val apiKeyConfigured: Boolean = false,
     val defaultContext: String = "",
+    val interestingFactsEnabled: Boolean = false,
     val settingsOpen: Boolean = false,
 )
