@@ -3,6 +3,7 @@ package de.graulich.podanswer
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
 
@@ -46,9 +47,9 @@ class GeminiClientTest {
             defaultContext = "",
         )
 
-        assert(prompt.contains("exakt 3723.456 Sekunden lang"))
-        assert(prompt.contains("0 Sekunden ist der erste decodierbare Audioframe"))
-        assert(prompt.contains("nicht segmentweise aufsummiert"))
+        assertTrue(prompt.contains("exakt 3723.456 Sekunden lang"))
+        assertTrue(prompt.contains("0 Sekunden ist der erste decodierbare Audioframe"))
+        assertTrue(prompt.contains("nicht segmentweise aufsummiert"))
     }
 
     @Test
@@ -59,9 +60,9 @@ class GeminiClientTest {
             defaultContext = "Achte besonders auf Risiken und offene Fragen.",
         )
 
-        assert(prompt.contains("<standard_context>"))
-        assert(prompt.contains("Achte besonders auf Risiken und offene Fragen."))
-        assert(prompt.contains("Themenauswahl, Kurzfassung, Antworten und Einordnung"))
+        assertTrue(prompt.contains("<standard_context>"))
+        assertTrue(prompt.contains("Achte besonders auf Risiken und offene Fragen."))
+        assertTrue(prompt.contains("Themenauswahl, Kurzfassung, Antworten und Einordnung"))
     }
 
     @Test
