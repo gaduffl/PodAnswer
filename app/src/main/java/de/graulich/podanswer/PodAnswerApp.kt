@@ -113,8 +113,9 @@ fun PodAnswerApp(viewModel: PodAnswerViewModel) {
         }
         if (state.settingsOpen) SettingsDialog(
             configured = state.apiKeyConfigured,
+            defaultContext = state.defaultContext,
             onDismiss = { viewModel.openSettings(false) },
-            onSave = viewModel::saveApiKey,
+            onSave = viewModel::saveSettings,
         )
     }
 }
@@ -374,10 +375,14 @@ private fun rememberAudioPlayer(path: String?): AudioPlayerControls {
         isPlaying = isPlaying,
         playFrom = { seconds ->
             player?.apply {
-                seekTo(seconds * 1000)
-                start()
+                if (isPlaying) pause()
+                isPlaying = false
                 activeSeconds = seconds
-                isPlaying = true
+                setOnSeekCompleteListener { mediaPlayer ->
+                    mediaPlayer.start()
+                    isPlaying = true
+                }
+                seekTo(seconds.coerceAtLeast(0) * 1000L, MediaPlayer.SEEK_CLOSEST)
             }
         },
         togglePause = {
@@ -439,16 +444,55 @@ private fun StatusLabel(status: String) {
 }
 
 @Composable
-private fun SettingsDialog(configured: Boolean, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+private fun SettingsDialog(
+    configured: Boolean,
+    defaultContext: String,
+    onDismiss: () -> Unit,
+    onSave: (String, String) -> Unit,
+) {
     var key by remember { mutableStateOf("") }
-    AlertDialog(onDismissRequest = onDismiss, title = { Text("Gemini verbinden") },
-        text = { Column {
-            Text(if (configured) "Ein API-Schlüssel ist bereits gespeichert. Ein neuer Eintrag ersetzt ihn." else "Füge deinen Gemini-API-Schlüssel aus Google AI Studio ein.")
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(key, { key = it }, label = { Text("API-Schlüssel") }, singleLine = true, visualTransformation = PasswordVisualTransformation())
-        } },
-        confirmButton = { Button(onClick = { onSave(key) }, enabled = key.isNotBlank()) { Text("Speichern") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } })
+    var context by remember(defaultContext) { mutableStateOf(defaultContext) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Einstellungen") },
+        text = {
+            Column {
+                Text(if (configured) "Ein API-Schlüssel ist bereits gespeichert. Ein neuer Eintrag ersetzt ihn." else "Füge deinen Gemini-API-Schlüssel aus Google AI Studio ein.")
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    key,
+                    { key = it },
+                    label = { Text("API-Schlüssel") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                Spacer(Modifier.height(20.dp))
+                Text("Standard-Kontext", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Dieser Fokus wird bei jeder neuen Transkription und Zusammenfassung berücksichtigt.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Ink.copy(alpha = .7f),
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    context,
+                    { context = it },
+                    label = { Text("Worauf soll PodAnswer achten?") },
+                    placeholder = { Text("z. B. Risiken, konkrete Empfehlungen und offene Fragen hervorheben") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 4,
+                    maxLines = 8,
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onSave(key, context) }, enabled = configured || key.isNotBlank()) {
+                Text("Speichern")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } },
+    )
 }
 
 private fun formatTime(seconds: Int): String = "%d:%02d".format(seconds / 60, seconds % 60)

@@ -37,6 +37,33 @@ class GeminiClientTest {
         assertEquals("Gemini hat nur ein unvollständiges Ergebnis erzeugt. Bitte erneut versuchen.", error.message)
     }
 
+
+    @Test
+    fun promptAnchorsTimestampsToMeasuredAudioTimeline() {
+        val prompt = client.buildPrompt(
+            SharedEpisode(title = "Folge"),
+            durationMillis = 3_723_456,
+            defaultContext = "",
+        )
+
+        assert(prompt.contains("exakt 3723.456 Sekunden lang"))
+        assert(prompt.contains("0 Sekunden ist der erste decodierbare Audioframe"))
+        assert(prompt.contains("nicht segmentweise aufsummiert"))
+    }
+
+    @Test
+    fun promptIncludesSavedDefaultContextAsAnalysisFocus() {
+        val prompt = client.buildPrompt(
+            SharedEpisode(title = "Folge"),
+            durationMillis = null,
+            defaultContext = "Achte besonders auf Risiken und offene Fragen.",
+        )
+
+        assert(prompt.contains("<standard_context>"))
+        assert(prompt.contains("Achte besonders auf Risiken und offene Fragen."))
+        assert(prompt.contains("Themenauswahl, Kurzfassung, Antworten und Einordnung"))
+    }
+
     @Test
     fun acceptsFencedJsonForCompatibility() {
         val response = JSONObject().put(
