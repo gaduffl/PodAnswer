@@ -20,7 +20,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -465,7 +467,7 @@ private fun SettingsDialog(
         onDismissRequest = onDismiss,
         title = { Text("Einstellungen") },
         text = {
-            Column {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
                 Text(if (configured) "Ein API-Schlüssel ist bereits gespeichert. Ein neuer Eintrag ersetzt ihn." else "Füge deinen Gemini-API-Schlüssel aus Google AI Studio ein.")
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
