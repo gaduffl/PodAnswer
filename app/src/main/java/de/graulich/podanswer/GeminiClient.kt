@@ -1,5 +1,6 @@
 package de.graulich.podanswer
 
+import android.media.MediaMetadataRetriever
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
@@ -29,14 +30,16 @@ class GeminiClient {
         apiKey: String,
         audio: File,
         episode: SharedEpisode,
+        defaultContext: String,
         onStage: (JobStage, String) -> Unit,
     ): PodcastAnalysis {
         onStage(JobStage.UPLOADING, "Audio wird zu Gemini hochgeladen …")
+        val durationMillis = readAudioDurationMillis(audio)
         val uploaded = uploadFile(apiKey, audio)
         return try {
             val active = waitUntilActive(apiKey, uploaded.first, uploaded.second)
             onStage(JobStage.PROCESSING, "Podcast wird transkribiert und ausgewertet …")
-            generate(apiKey, active.second, episode)
+            generate(apiKey, active.second, episode, durationMillis, defaultContext)
         } finally {
             runCatching { deleteFile(apiKey, uploaded.first) }
         }
@@ -92,8 +95,14 @@ class GeminiClient {
         throw IOException("Die Audioverarbeitung hat zu lange gedauert.")
     }
 
-    private suspend fun generate(apiKey: String, uri: String, episode: SharedEpisode): PodcastAnalysis {
-        val prompt = buildPrompt(episode)
+    private suspend fun generate(
+        apiKey: String,
+        uri: String,
+        episode: SharedEpisode,
+        durationMillis: Long?,
+        defaultContext: String,
+    ): PodcastAnalysis {
+        val prompt = buildPrompt(episode, durationMillis, defaultContext)
         val body = JSONObject().apply {
             put("model", "gemini-3.8-flash")
             put("input", JSONArray()
@@ -177,20 +186,61 @@ class GeminiClient {
         }
     }
 
-    private fun buildPrompt(e: SharedEpisode) = """
-        Du analysierst eine Podcastfolge. Antworte auf Deutsch; belasse das Transkript in der gesprochenen Originalsprache.
+    internal fun buildPrompt(
+        e: SharedEpisode,
+        durationMillis: Long?,
+        defaultContext: String,
+    ): String {
+        val timeline = durationMillis?.let {
+            val durationSeconds = "%.3f".format(java.util.Locale.US, it / 1000.0)
+            """
+            Die hochgeladene Audiodatei ist laut ihrem Media-Container exakt $durationSeconds Sekunden lang.
+            Verwende ausschließlich die Zeitachse dieser Datei: 0 Sekunden ist der erste decodierbare Audioframe.
+            Bestimme jeden Zeitstempel direkt am Audio, nicht aus Textmenge oder geschätzter Sprechgeschwindigkeit.
+            Alle Zeitstempel sind absolute Positionen, werden nicht segmentweise aufsummiert und dürfen $durationSeconds Sekunden nicht überschreiten.
+            """.trimIndent()
+        }.orEmpty()
+        val focus = defaultContext.trim().takeIf { it.isNotEmpty() }?.let {
+            """
+            Zusätzlicher Standard-Kontext des Nutzers:
+            <standard_context>
+            $it
+            </standard_context>
+            Berücksichtige diesen Fokus in Themenauswahl, Kurzfassung, Antworten und Einordnung, ohne unbelegte Aussagen hinzuzufügen.
+            """.trimIndent()
+        }.orEmpty()
 
-        Titel: ${e.title}
-        Podcast: ${e.podcast}
-        Beschreibung: ${e.description}
+        return """
+            Du analysierst eine Podcastfolge. Antworte auf Deutsch; belasse das Transkript in der gesprochenen Originalsprache.
 
-        1. Transkribiere die gesamte Audiodatei möglichst wortgetreu in sinnvollen Segmenten mit Start- und Endzeit in Sekunden. Erkenne verschiedene Sprecher neutral als „Sprecher 1“, „Sprecher 2“ usw. Markiere unverständliche Passagen mit [unverständlich].
-        2. Leite nur Fragen und Themen ab, die Titel oder Beschreibung tatsächlich ankündigen. Erfinde keine konkreten Fragen für vage Formulierungen.
-        3. Beantworte jedes Thema ausschließlich anhand der Audiodatei. Gib den Status exakt als „Beantwortet“, „Teilweise beantwortet“ oder „Nicht beantwortet“ an.
-        4. Führe relevante Einschränkungen, Gegenargumente und Unsicherheiten unter nuance auf.
-        5. Belege jede inhaltliche Antwort mit bis zu drei kurzen, wortgetreuen Transkriptausschnitten und ihrer Zeit in Sekunden. Wenn es keinen Beleg gibt, verwende eine leere Belegliste.
-        6. Stelle Aussagen der Sprecher als Aussagen der Sprecher dar. Führe keinen externen Faktencheck durch.
-    """.trimIndent()
+            Titel: ${e.title}
+            Podcast: ${e.podcast}
+            Beschreibung: ${e.description}
+
+            $timeline
+
+            $focus
+
+            1. Transkribiere die gesamte Audiodatei möglichst wortgetreu in sinnvollen Segmenten mit Start- und Endzeit in Sekunden. Erkenne verschiedene Sprecher neutral als „Sprecher 1“, „Sprecher 2“ usw. Markiere unverständliche Passagen mit [unverständlich].
+            2. Leite nur Fragen und Themen ab, die Titel, Beschreibung oder Standard-Kontext tatsächlich vorgeben. Erfinde keine konkreten Fragen für vage Formulierungen.
+            3. Beantworte jedes Thema ausschließlich anhand der Audiodatei. Gib den Status exakt als „Beantwortet“, „Teilweise beantwortet“ oder „Nicht beantwortet“ an.
+            4. Führe relevante Einschränkungen, Gegenargumente und Unsicherheiten unter nuance auf.
+            5. Belege jede inhaltliche Antwort mit bis zu drei kurzen, wortgetreuen Transkriptausschnitten und ihrer absoluten Zeit in Sekunden. Wenn es keinen Beleg gibt, verwende eine leere Belegliste.
+            6. Stelle Aussagen der Sprecher als Aussagen der Sprecher dar. Führe keinen externen Faktencheck durch.
+        """.trimIndent()
+    }
+
+    private fun readAudioDurationMillis(audio: File): Long? {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(audio.absolutePath)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+        } catch (_: RuntimeException) {
+            null
+        } finally {
+            runCatching { retriever.release() }
+        }
+    }
 
     private fun responseSchema(): JSONObject {
         fun string() = JSONObject().put("type", "string")

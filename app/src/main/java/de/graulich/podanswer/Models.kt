@@ -57,5 +57,6 @@ data class AppState(
     val busyStage: JobStage = JobStage.IDLE,
     val busyMessage: String = "",
     val apiKeyConfigured: Boolean = false,
+    val defaultContext: String = "",
     val settingsOpen: Boolean = false,
 )

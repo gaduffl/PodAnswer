@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit
 class PodAnswerViewModel(application: Application) : AndroidViewModel(application) {
     private val store = EpisodeStore(application)
     private val keyStore = ApiKeyStore(application)
+    private val settingsStore = SettingsStore(application)
     private val gemini = GeminiClient()
     private val rssResolver = RssDescriptionResolver()
     private val downloader = OkHttpClient.Builder()
@@ -33,7 +34,13 @@ class PodAnswerViewModel(application: Application) : AndroidViewModel(applicatio
             record.copy(stage = JobStage.ERROR, error = "Die Verarbeitung wurde von Android unterbrochen. Du kannst sie erneut starten; eine bereits geladene MP3 wird wiederverwendet.")
         else record
     }
-    private val _state = MutableStateFlow(AppState(records = initialRecords, apiKeyConfigured = keyStore.hasKey()))
+    private val _state = MutableStateFlow(
+        AppState(
+            records = initialRecords,
+            apiKeyConfigured = keyStore.hasKey(),
+            defaultContext = settingsStore.readDefaultContext(),
+        )
+    )
     val state: StateFlow<AppState> = _state.asStateFlow()
 
     init {
@@ -68,10 +75,17 @@ class PodAnswerViewModel(application: Application) : AndroidViewModel(applicatio
     fun openRecord(id: String?) = _state.update { it.copy(selectedId = id, incoming = null) }
     fun openSettings(open: Boolean) = _state.update { it.copy(settingsOpen = open) }
 
-    fun saveApiKey(value: String) {
-        if (value.isBlank()) return
-        keyStore.save(value)
-        _state.update { it.copy(apiKeyConfigured = true, settingsOpen = false) }
+    fun saveSettings(apiKey: String, defaultContext: String) {
+        if (apiKey.isNotBlank()) keyStore.save(apiKey)
+        val normalizedContext = defaultContext.trim()
+        settingsStore.saveDefaultContext(normalizedContext)
+        _state.update {
+            it.copy(
+                apiKeyConfigured = keyStore.hasKey(),
+                defaultContext = normalizedContext,
+                settingsOpen = false,
+            )
+        }
     }
 
     fun analyzeIncoming() {
@@ -108,7 +122,12 @@ class PodAnswerViewModel(application: Application) : AndroidViewModel(applicatio
             val episodeWithAudio = enrichedEpisode.copy(localAudioPath = audio.absolutePath)
             updateRecord(id) { it.copy(episode = episodeWithAudio, stage = JobStage.UPLOADING) }
             val apiKey = keyStore.read() ?: error("Der API-Schlüssel konnte nicht gelesen werden.")
-            val analysis = gemini.analyze(apiKey, audio, episodeWithAudio) { stage, message ->
+            val analysis = gemini.analyze(
+                apiKey = apiKey,
+                audio = audio,
+                episode = episodeWithAudio,
+                defaultContext = _state.value.defaultContext,
+            ) { stage, message ->
                 _state.update { it.copy(busyStage = stage, busyMessage = message) }
                 updateRecord(id, persist = false) { it.copy(stage = stage) }
             }

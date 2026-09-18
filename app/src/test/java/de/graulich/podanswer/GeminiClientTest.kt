@@ -3,6 +3,7 @@ package de.graulich.podanswer
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
 
@@ -35,6 +36,33 @@ class GeminiClientTest {
         val error = assertThrows(IOException::class.java) { client.extractOutput(response) }
 
         assertEquals("Gemini hat nur ein unvollständiges Ergebnis erzeugt. Bitte erneut versuchen.", error.message)
+    }
+
+
+    @Test
+    fun promptAnchorsTimestampsToMeasuredAudioTimeline() {
+        val prompt = client.buildPrompt(
+            SharedEpisode(title = "Folge"),
+            durationMillis = 3_723_456,
+            defaultContext = "",
+        )
+
+        assertTrue(prompt.contains("exakt 3723.456 Sekunden lang"))
+        assertTrue(prompt.contains("0 Sekunden ist der erste decodierbare Audioframe"))
+        assertTrue(prompt.contains("nicht segmentweise aufsummiert"))
+    }
+
+    @Test
+    fun promptIncludesSavedDefaultContextAsAnalysisFocus() {
+        val prompt = client.buildPrompt(
+            SharedEpisode(title = "Folge"),
+            durationMillis = null,
+            defaultContext = "Achte besonders auf Risiken und offene Fragen.",
+        )
+
+        assertTrue(prompt.contains("<standard_context>"))
+        assertTrue(prompt.contains("Achte besonders auf Risiken und offene Fragen."))
+        assertTrue(prompt.contains("Themenauswahl, Kurzfassung, Antworten und Einordnung"))
     }
 
     @Test
