@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -244,7 +245,9 @@ private fun DetailScreen(record: EpisodeRecord, onBack: () -> Unit, onRetry: () 
     }) }) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
             Column(Modifier.padding(horizontal = 18.dp, vertical = 8.dp)) {
-                Text(record.episode.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                SelectionContainer {
+                    Text(record.episode.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                }
             }
             when {
                 record.stage == JobStage.ERROR -> ErrorPanel(record.error.orEmpty(), onRetry)
@@ -287,7 +290,9 @@ private fun ProcessingPanel(stage: JobStage) {
 private fun ErrorPanel(error: String, onRetry: () -> Unit) {
     Column(Modifier.padding(24.dp)) {
         Text("Analyse fehlgeschlagen", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Coral)
-        Spacer(Modifier.height(8.dp)); Text(error); Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(8.dp))
+        SelectionContainer { Text(error) }
+        Spacer(Modifier.height(18.dp))
         Button(onClick = onRetry) { Text("Erneut versuchen") }
     }
 }
@@ -297,25 +302,31 @@ private fun AnswersTab(record: EpisodeRecord, player: AudioPlayerControls) {
     val analysis = record.analysis ?: return
     LazyColumn(Modifier.fillMaxSize().padding(horizontal = 18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item {
-            Text("Kurzfassung", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
-            Text(analysis.summary, modifier = Modifier.padding(top = 6.dp))
+            SelectionContainer {
+                Column {
+                    Text("Kurzfassung", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
+                    Text(analysis.summary, modifier = Modifier.padding(top = 6.dp))
+                }
+            }
         }
         items(analysis.topics) { topic ->
             Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(18.dp)) {
-                Column(Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.Top) { Text(topic.question, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); StatusLabel(topic.status) }
-                    Spacer(Modifier.height(10.dp)); Text(topic.answer)
-                    if (topic.nuance.isNotBlank()) {
-                        Spacer(Modifier.height(12.dp)); Text("Einordnung", style = MaterialTheme.typography.labelLarge, color = Teal); Text(topic.nuance, style = MaterialTheme.typography.bodySmall)
-                    }
-                    topic.evidence.forEach { evidence ->
-                        HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Mist)
-                        val isCurrent = player.activeSeconds == evidence.timestampSeconds
-                        Row(Modifier.clickable {
-                            if (isCurrent) player.togglePause() else player.playFrom(evidence.timestampSeconds)
-                        }, verticalAlignment = Alignment.Top) {
-                            Icon(if (isCurrent && player.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Teal, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(6.dp))
-                            Column { Text(formatTime(evidence.timestampSeconds), color = Teal, style = MaterialTheme.typography.labelMedium); Text("„${evidence.quote}“", style = MaterialTheme.typography.bodySmall) }
+                SelectionContainer {
+                    Column(Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.Top) { Text(topic.question, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)); StatusLabel(topic.status) }
+                        Spacer(Modifier.height(10.dp)); Text(topic.answer)
+                        if (topic.nuance.isNotBlank()) {
+                            Spacer(Modifier.height(12.dp)); Text("Einordnung", style = MaterialTheme.typography.labelLarge, color = Teal); Text(topic.nuance, style = MaterialTheme.typography.bodySmall)
+                        }
+                        topic.evidence.forEach { evidence ->
+                            HorizontalDivider(Modifier.padding(vertical = 10.dp), color = Mist)
+                            val isCurrent = player.activeSeconds == evidence.timestampSeconds
+                            Row(Modifier.clickable {
+                                if (isCurrent) player.togglePause() else player.playFrom(evidence.timestampSeconds)
+                            }, verticalAlignment = Alignment.Top) {
+                                Icon(if (isCurrent && player.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, null, tint = Teal, modifier = Modifier.size(20.dp)); Spacer(Modifier.width(6.dp))
+                                Column { Text(formatTime(evidence.timestampSeconds), color = Teal, style = MaterialTheme.typography.labelMedium); Text("„${evidence.quote}“", style = MaterialTheme.typography.bodySmall) }
+                            }
                         }
                     }
                 }
@@ -334,11 +345,13 @@ private fun TranscriptTab(record: EpisodeRecord, player: AudioPlayerControls) {
         item { OutlinedTextField(query, { query = it }, label = { Text("Transkript durchsuchen") }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp), singleLine = true) }
         items(visible) { segment ->
             val isCurrent = player.activeSeconds == segment.startSeconds
-            Row(Modifier.fillMaxWidth().clickable {
-                if (isCurrent) player.togglePause() else player.playFrom(segment.startSeconds)
-            }.padding(vertical = 4.dp), verticalAlignment = Alignment.Top) {
-                Text(formatTime(segment.startSeconds), color = Teal, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(54.dp))
-                Column { Text(segment.speaker, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium); Text(segment.text) }
+            SelectionContainer {
+                Row(Modifier.fillMaxWidth().clickable {
+                    if (isCurrent) player.togglePause() else player.playFrom(segment.startSeconds)
+                }.padding(vertical = 4.dp), verticalAlignment = Alignment.Top) {
+                    Text(formatTime(segment.startSeconds), color = Teal, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(54.dp))
+                    Column { Text(segment.speaker, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium); Text(segment.text) }
+                }
             }
         }
         item { Spacer(Modifier.height(20.dp)) }
