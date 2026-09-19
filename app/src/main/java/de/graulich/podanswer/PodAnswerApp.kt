@@ -165,8 +165,14 @@ private fun EmptyHome(modifier: Modifier, onPick: () -> Unit) {
 private fun EpisodeCard(record: EpisodeRecord, onClick: () -> Unit) {
     Card(onClick = onClick, colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(18.dp)) {
         Column(Modifier.padding(16.dp)) {
-            Text(record.episode.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (record.episode.podcast.isNotBlank()) Text(record.episode.podcast, style = MaterialTheme.typography.bodySmall, color = Teal)
+            SelectionContainer {
+                Text(record.episode.title, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            if (record.episode.podcast.isNotBlank()) {
+                SelectionContainer {
+                    Text(record.episode.podcast, style = MaterialTheme.typography.bodySmall, color = Teal)
+                }
+            }
             Spacer(Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 StatusPill(record.stage)
