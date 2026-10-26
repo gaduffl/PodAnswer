@@ -257,7 +257,7 @@ private fun DetailScreen(record: EpisodeRecord, onBack: () -> Unit, onRetry: () 
             }
             when {
                 record.stage == JobStage.ERROR -> ErrorPanel(record.error.orEmpty(), onRetry)
-                record.analysis == null -> ProcessingPanel(record.stage)
+                record.analysis == null -> ProcessingPanel(record.stage, record.progressMessage)
                 else -> {
                     TabRow(selectedTabIndex = tab, containerColor = Paper) {
                         Tab(tab == 0, { tab = 0 }, text = { Text("Antworten") })
@@ -278,17 +278,19 @@ private fun DetailScreen(record: EpisodeRecord, onBack: () -> Unit, onRetry: () 
 }
 
 @Composable
-private fun ProcessingPanel(stage: JobStage) {
+private fun ProcessingPanel(stage: JobStage, message: String) {
     Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         CircularProgressIndicator(color = Teal)
         Spacer(Modifier.height(18.dp))
-        Text(when (stage) {
-            JobStage.DOWNLOADING -> "MP3 wird geladen …"
-            JobStage.UPLOADING -> "Audio wird hochgeladen …"
-            JobStage.PROCESSING -> "Transkript und Antworten werden erstellt …"
-            else -> "Analyse wird vorbereitet …"
+        Text(message.ifBlank {
+            when (stage) {
+                JobStage.DOWNLOADING -> "MP3 wird geladen …"
+                JobStage.UPLOADING -> "Audio wird hochgeladen …"
+                JobStage.PROCESSING -> "Transkript und Antworten werden erstellt …"
+                else -> "Analyse wird vorbereitet …"
+            }
         }, fontWeight = FontWeight.SemiBold)
-        Text("Du kannst die App geöffnet lassen. Lange Folgen benötigen einige Minuten.", style = MaterialTheme.typography.bodySmall, color = Ink.copy(alpha = .6f))
+        Text("Folgen bis 6 Stunden werden abschnittsweise verarbeitet. Bitte lasse die App während der Analyse geöffnet.", style = MaterialTheme.typography.bodySmall, color = Ink.copy(alpha = .6f))
     }
 }
 
@@ -355,7 +357,7 @@ private fun TranscriptTab(record: EpisodeRecord, player: AudioPlayerControls) {
                 Row(Modifier.fillMaxWidth().clickable {
                     if (isCurrent) player.togglePause() else player.playFrom(segment.startSeconds)
                 }.padding(vertical = 4.dp), verticalAlignment = Alignment.Top) {
-                    Text(formatTime(segment.startSeconds), color = Teal, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(54.dp))
+                    Text(formatTime(segment.startSeconds), color = Teal, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(72.dp))
                     Column { Text(segment.speaker, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium); Text(segment.text) }
                 }
             }
@@ -549,7 +551,11 @@ private fun SettingsDialog(
     )
 }
 
-private fun formatTime(seconds: Int): String = "%d:%02d".format(seconds / 60, seconds % 60)
+private fun formatTime(seconds: Int): String = if (seconds >= 3_600) {
+    "%d:%02d:%02d".format(seconds / 3_600, seconds / 60 % 60, seconds % 60)
+} else {
+    "%d:%02d".format(seconds / 60, seconds % 60)
+}
 
 private fun shareAnalysis(context: Context, record: EpisodeRecord) {
     val analysis = record.analysis ?: return

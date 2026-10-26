@@ -9,6 +9,7 @@ PodAnswer is an Android app for sharing podcast episodes from Podcast Republic, 
 - Also accepts a directly shared or manually selected audio file.
 - Downloads the MP3 and sends it to the Gemini Files API.
 - Requests a timestamped, speaker-labelled transcript and evidence-based answers in structured JSON.
+- Supports audio up to six hours: processes 20-minute sections, then combines their answers and summaries into one episode analysis while retaining the full transcript.
 - Labels each title topic as answered, partly answered, or unanswered.
 - Plays the local audio from every evidence or transcript timestamp.
 - Saves the analysis and audio locally, supports transcript search, retry, deletion, and text export.
@@ -45,6 +46,8 @@ The release key must be retained permanently. Future APK updates must be signed 
 4. Verify the detected title and select **Podcast analysieren**.
 
 The audio is sent to Google's Gemini API. After a successful analysis, PodAnswer requests deletion of the uploaded Gemini file. The downloaded MP3 and generated result remain in the app's private local storage until the analysis is deleted.
+
+For episodes longer than 20 minutes, PodAnswer exports one temporary M4A section at a time, uploads and analyzes it, then deletes the temporary section and requests deletion of the Gemini upload, including on failure. Transcript and evidence timestamps are shifted to positions in the original audio, which remains available for playback and export. Speaker labels include their section number because separate analyses cannot reliably identify the same speaker across sections. A final text-only request combines all section summaries and answers; it does not regenerate or shorten the transcript. Longer episodes require more API requests and processing time. Audio longer than six hours, or with an unreadable duration, is rejected before upload.
 
 ## Architecture
 

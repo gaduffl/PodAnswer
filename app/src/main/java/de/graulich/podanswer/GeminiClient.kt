@@ -1,8 +1,13 @@
 package de.graulich.podanswer
 
-import android.media.MediaMetadataRetriever
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
@@ -19,12 +24,16 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-class GeminiClient {
-    private val client = OkHttpClient.Builder()
+internal class GeminiClient(
+    private val audioChunkExporter: AudioChunkExporter? = null,
+    private val audioInfoReader: (File) -> AudioInfo = ::readAudioInfo,
+    private val apiBaseUrl: String = "https://generativelanguage.googleapis.com",
+    private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(5, TimeUnit.MINUTES)
-        .writeTimeout(5, TimeUnit.MINUTES)
-        .build()
+        .readTimeout(15, TimeUnit.MINUTES)
+        .writeTimeout(15, TimeUnit.MINUTES)
+        .build(),
+) {
 
     suspend fun analyze(
         apiKey: String,
@@ -33,24 +42,72 @@ class GeminiClient {
         defaultContext: String,
         interestingFactsEnabled: Boolean,
         onStage: (JobStage, String) -> Unit,
+    ): PodcastAnalysis = withContext(Dispatchers.IO) {
+        val info = audioInfoReader(audio)
+        val chunks = AudioChunks.plan(info.durationMillis)
+        if (chunks.size == 1) return@withContext analyzeFile(
+            apiKey, audio, info.mimeType,
+            buildPrompt(episode, info.durationMillis, defaultContext, interestingFactsEnabled), onStage,
+        )
+
+        val exporter = audioChunkExporter ?: throw IOException("Die Audioaufteilung ist nicht verfügbar.")
+        val parts = chunks.mapIndexed { index, chunk ->
+            currentCoroutineContext().ensureActive()
+            val progress = "Abschnitt ${index + 1}/${chunks.size}"
+            onStage(JobStage.PROCESSING, "$progress: Audio wird vorbereitet …")
+            val section = exporter.export(audio, chunk)
+            try {
+                val prompt = buildPrompt(episode, chunk.durationMillis, defaultContext, interestingFactsEnabled) +
+                    "\nDies ist $progress einer zusammenhängenden Folge. Analysiere den gesamten Abschnitt. " +
+                    "Alle Zeiten beziehen sich auf diese Abschnittsdatei und beginnen bei 0. " +
+                    "Der Themenstatus gilt vorläufig nur für diesen Abschnitt; die Gesamtbewertung erfolgt später."
+                val analysis = analyzeFile(apiKey, section, "audio/m4a", prompt) { stage, message ->
+                    onStage(stage, "$progress: $message")
+                }
+                offsetAnalysis(analysis, chunk, index + 1)
+            } finally {
+                section.delete()
+            }
+        }
+
+        onStage(JobStage.PROCESSING, "Alle ${chunks.size} Abschnitte werden zur Gesamtanalyse zusammengeführt …")
+        val combined = requestResult(
+            apiKey = apiKey,
+            prompt = buildMergePrompt(episode, parts, defaultContext, interestingFactsEnabled),
+            includeTranscript = false,
+        ).put("transcript", JSONArray())
+        val result = parseAnalysis(combined)
+        val sourceEvidence = parts.flatMap { it.topics }.flatMap { it.evidence }.toSet()
+        if (result.topics.any { topic -> topic.evidence.any { it !in sourceEvidence } }) {
+            throw IOException("Die Gesamtanalyse enthält einen nicht belegten Zeitstempel oder ein verändertes Zitat. Bitte erneut versuchen.")
+        }
+        result.copy(transcript = parts.flatMap { it.transcript }.sortedBy { it.startSeconds })
+    }
+
+    private suspend fun analyzeFile(
+        apiKey: String,
+        audio: File,
+        mimeType: String,
+        prompt: String,
+        onStage: (JobStage, String) -> Unit,
     ): PodcastAnalysis {
         onStage(JobStage.UPLOADING, "Audio wird zu Gemini hochgeladen …")
-        val durationMillis = readAudioDurationMillis(audio)
-        val uploaded = uploadFile(apiKey, audio)
+        val uploaded = uploadFile(apiKey, audio, mimeType)
         return try {
             val active = waitUntilActive(apiKey, uploaded.first, uploaded.second)
             onStage(JobStage.PROCESSING, "Podcast wird transkribiert und ausgewertet …")
-            generate(apiKey, active.second, episode, durationMillis, defaultContext, interestingFactsEnabled)
+            parseAnalysis(requestResult(apiKey, prompt, active.second, mimeType))
         } finally {
-            runCatching { deleteFile(apiKey, uploaded.first) }
+            withContext(NonCancellable) {
+                withTimeoutOrNull(30_000) { runCatching { deleteFile(apiKey, uploaded.first) } }
+            }
         }
     }
 
-    private suspend fun uploadFile(apiKey: String, file: File): Pair<String, String> {
-        val mime = "audio/mpeg"
+    private suspend fun uploadFile(apiKey: String, file: File, mime: String): Pair<String, String> {
         val metadata = JSONObject().put("file", JSONObject().put("display_name", file.name)).toString()
         val start = Request.Builder()
-            .url("https://generativelanguage.googleapis.com/upload/v1beta/files")
+            .url("$apiBaseUrl/upload/v1beta/files")
             .header("x-goog-api-key", apiKey)
             .header("X-Goog-Upload-Protocol", "resumable")
             .header("X-Goog-Upload-Command", "start")
@@ -58,11 +115,11 @@ class GeminiClient {
             .header("X-Goog-Upload-Header-Content-Type", mime)
             .post(metadata.toRequestBody("application/json".toMediaType()))
             .build()
-        val startResponse = client.newCall(start).await()
-        if (!startResponse.isSuccessful) throw apiError(startResponse)
-        val uploadUrl = startResponse.header("X-Goog-Upload-URL")
-            ?: throw IOException("Gemini hat keine Upload-Adresse zurückgegeben.")
-        startResponse.close()
+        val uploadUrl = client.newCall(start).await().use { response ->
+            if (!response.isSuccessful) throw apiError(response)
+            response.header("X-Goog-Upload-URL")
+                ?: throw IOException("Gemini hat keine Upload-Adresse zurückgegeben.")
+        }
 
         val upload = Request.Builder().url(uploadUrl)
             .header("Content-Length", file.length().toString())
@@ -78,9 +135,9 @@ class GeminiClient {
     }
 
     private suspend fun waitUntilActive(apiKey: String, name: String, uri: String): Pair<String, String> {
-        repeat(60) {
+        repeat(450) {
             val request = Request.Builder()
-                .url("https://generativelanguage.googleapis.com/v1beta/$name")
+                .url("$apiBaseUrl/v1beta/$name")
                 .header("x-goog-api-key", apiKey)
                 .get().build()
             client.newCall(request).await().use { response ->
@@ -96,30 +153,29 @@ class GeminiClient {
         throw IOException("Die Audioverarbeitung hat zu lange gedauert.")
     }
 
-    private suspend fun generate(
+    private suspend fun requestResult(
         apiKey: String,
-        uri: String,
-        episode: SharedEpisode,
-        durationMillis: Long?,
-        defaultContext: String,
-        interestingFactsEnabled: Boolean,
-    ): PodcastAnalysis {
-        val prompt = buildPrompt(episode, durationMillis, defaultContext, interestingFactsEnabled)
+        prompt: String,
+        uri: String? = null,
+        mimeType: String = "audio/mpeg",
+        includeTranscript: Boolean = true,
+    ): JSONObject {
         val body = JSONObject().apply {
             put("model", "gemini-3.8-flash")
-            put("input", JSONArray()
-                .put(JSONObject().put("type", "audio").put("uri", uri).put("mime_type", "audio/mp3"))
-                .put(JSONObject().put("type", "text").put("text", prompt)))
+            put("input", JSONArray().apply {
+                if (uri != null) put(JSONObject().put("type", "audio").put("uri", uri).put("mime_type", mimeType))
+                put(JSONObject().put("type", "text").put("text", prompt))
+            })
             put("response_format", JSONObject()
                 .put("type", "text")
                 .put("mime_type", "application/json")
-                .put("schema", responseSchema()))
+                .put("schema", responseSchema(includeTranscript)))
             put("generation_config", JSONObject()
                 .put("max_output_tokens", 65_536)
                 .put("thinking_level", "low"))
         }.toString()
         val request = Request.Builder()
-            .url("https://generativelanguage.googleapis.com/v1beta/interactions")
+            .url("$apiBaseUrl/v1beta/interactions")
             .header("x-goog-api-key", apiKey)
             .post(body.toRequestBody("application/json".toMediaType()))
             .build()
@@ -127,7 +183,7 @@ class GeminiClient {
             if (!response.isSuccessful) throw apiError(response)
             val raw = response.body?.string().orEmpty()
             if (raw.isBlank()) throw IOException("Gemini hat eine leere Antwort zurückgegeben.")
-            return parseAnalysis(extractOutput(JSONObject(raw)))
+            return extractOutput(JSONObject(raw))
         }
     }
 
@@ -251,19 +307,68 @@ class GeminiClient {
         """.trimIndent()
     }
 
-    private fun readAudioDurationMillis(audio: File): Long? {
-        val retriever = MediaMetadataRetriever()
-        return try {
-            retriever.setDataSource(audio.absolutePath)
-            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
-        } catch (_: RuntimeException) {
-            null
-        } finally {
-            runCatching { retriever.release() }
+    internal fun offsetAnalysis(analysis: PodcastAnalysis, chunk: AudioChunk, partNumber: Int): PodcastAnalysis {
+        val lastSecond = ((chunk.durationMillis + 999) / 1_000).toInt()
+        val lastStartSecond = (chunk.durationMillis / 1_000).toInt()
+        val offsetSeconds = (chunk.startMillis / 1_000).toInt()
+        if (analysis.transcript.any { it.startSeconds !in 0..lastStartSecond || it.endSeconds !in it.startSeconds..lastSecond } ||
+            analysis.topics.any { topic -> topic.evidence.any { it.timestampSeconds !in 0..lastStartSecond } }) {
+            throw IOException("Gemini hat ungültige Zeitstempel für Abschnitt $partNumber zurückgegeben. Bitte erneut versuchen.")
         }
+        return analysis.copy(
+            topics = analysis.topics.map { topic -> topic.copy(evidence = topic.evidence.map {
+                it.copy(timestampSeconds = it.timestampSeconds + offsetSeconds)
+            }) },
+            // Speaker numbers from independent requests do not establish identity across sections.
+            transcript = analysis.transcript.map { it.copy(
+                startSeconds = it.startSeconds + offsetSeconds,
+                endSeconds = it.endSeconds + offsetSeconds,
+                speaker = "Teil $partNumber · ${it.speaker}",
+            ) },
+        )
     }
 
-    private fun responseSchema(): JSONObject {
+    internal fun buildMergePrompt(
+        episode: SharedEpisode,
+        parts: List<PodcastAnalysis>,
+        defaultContext: String,
+        interestingFactsEnabled: Boolean,
+    ): String {
+        val sections = JSONArray().apply { parts.forEachIndexed { index, part ->
+            put(JSONObject().put("section", index + 1).put("summary", part.summary)
+                .put("topics", JSONArray().apply { part.topics.forEach { topic ->
+                    put(JSONObject().put("question", topic.question).put("status", topic.status)
+                        .put("answer", topic.answer).put("nuance", topic.nuance)
+                        .put("evidence", JSONArray().apply { topic.evidence.forEach { evidence ->
+                            put(JSONObject().put("timestampSeconds", evidence.timestampSeconds).put("quote", evidence.quote))
+                        } }))
+                } }))
+        } }
+        val facts = if (interestingFactsEnabled && defaultContext.isNotBlank())
+            "Führe relevante, direkt belegte Fakten separat mit dem Status „Interessanter Fakt“ auf."
+        else "Erzeuge keine Einträge mit dem Status „Interessanter Fakt“."
+        return """
+            Führe die folgenden chronologischen Teilanalysen einer Podcastfolge zu einer einzigen Gesamtanalyse auf Deutsch zusammen.
+            Titel: ${episode.title}
+            Podcast: ${episode.podcast}
+            Beschreibung: ${episode.description}
+            Standard-Kontext des Nutzers: $defaultContext
+
+            Berücksichtige ALLE Abschnitte, auch die letzten. Fasse die gesamte Folge in summary zusammen.
+            Vereinige gleiche Frage-Themen. Bewerte „Beantwortet“, „Teilweise beantwortet“ oder „Nicht beantwortet“ anhand ALLER Abschnitte.
+            Eine in einem frühen Abschnitt unbeantwortete Frage kann später beantwortet werden. Bewahre Einschränkungen, Gegenargumente und Unsicherheiten unter nuance.
+            Belege jede Antwort mit bis zu drei Belegen aus den Teilanalysen. Übernimm timestampSeconds und quote unverändert; alle Zeiten sind bereits absolute Positionen in der Originaldatei.
+            Erfinde keine Belege oder Antworten und führe keinen externen Faktencheck durch. Aussagen der Sprecher bleiben Aussagen der Sprecher.
+            $facts
+            Gib nur summary und topics zurück. Das vollständige Transkript wird unverändert aus den Abschnitten übernommen.
+
+            <section_analyses>
+            $sections
+            </section_analyses>
+        """.trimIndent()
+    }
+
+    private fun responseSchema(includeTranscript: Boolean = true): JSONObject {
         fun string() = JSONObject().put("type", "string")
         fun integer() = JSONObject().put("type", "integer")
         val evidence = JSONObject().put("type", "object")
@@ -279,11 +384,14 @@ class GeminiClient {
             .put("properties", JSONObject().put("startSeconds", integer()).put("endSeconds", integer())
                 .put("speaker", string()).put("text", string()))
             .put("required", JSONArray(listOf("startSeconds", "endSeconds", "speaker", "text")))
-        return JSONObject().put("type", "object")
-            .put("properties", JSONObject().put("summary", string())
-                .put("topics", JSONObject().put("type", "array").put("items", topic))
-                .put("transcript", JSONObject().put("type", "array").put("items", segment)))
-            .put("required", JSONArray(listOf("summary", "topics", "transcript")))
+        val properties = JSONObject().put("summary", string())
+            .put("topics", JSONObject().put("type", "array").put("items", topic))
+        val required = JSONArray(listOf("summary", "topics"))
+        if (includeTranscript) {
+            properties.put("transcript", JSONObject().put("type", "array").put("items", segment))
+            required.put("transcript")
+        }
+        return JSONObject().put("type", "object").put("properties", properties).put("required", required)
     }
 
     private fun parseAnalysis(j: JSONObject): PodcastAnalysis {
@@ -303,7 +411,7 @@ class GeminiClient {
     }
 
     private suspend fun deleteFile(apiKey: String, name: String) {
-        val request = Request.Builder().url("https://generativelanguage.googleapis.com/v1beta/$name")
+        val request = Request.Builder().url("$apiBaseUrl/v1beta/$name")
             .header("x-goog-api-key", apiKey).delete().build()
         client.newCall(request).await().close()
     }
