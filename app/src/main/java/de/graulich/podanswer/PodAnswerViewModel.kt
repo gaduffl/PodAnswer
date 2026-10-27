@@ -24,7 +24,7 @@ class PodAnswerViewModel(application: Application) : AndroidViewModel(applicatio
     private val store = EpisodeStore(application)
     private val keyStore = ApiKeyStore(application)
     private val settingsStore = SettingsStore(application)
-    private val gemini = GeminiClient()
+    private val gemini = GeminiClient(audioChunkExporter = AndroidAudioChunkExporter(application))
     private val rssResolver = RssDescriptionResolver()
     private val downloader = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS).readTimeout(10, TimeUnit.MINUTES).build()
@@ -133,7 +133,7 @@ class PodAnswerViewModel(application: Application) : AndroidViewModel(applicatio
                 interestingFactsEnabled = _state.value.interestingFactsEnabled,
             ) { stage, message ->
                 _state.update { it.copy(busyStage = stage, busyMessage = message) }
-                updateRecord(id, persist = false) { it.copy(stage = stage) }
+                updateRecord(id, persist = false) { it.copy(stage = stage, progressMessage = message) }
             }
             updateRecord(id) { it.copy(analysis = analysis, stage = JobStage.COMPLETE, error = null) }
             _state.update { it.copy(busyStage = JobStage.COMPLETE, busyMessage = "Analyse abgeschlossen") }
