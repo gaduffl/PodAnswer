@@ -51,6 +51,17 @@ data class EpisodeRecord(
     val progressMessage: String = "",
 )
 
+enum class ThinkingLevel(val apiValue: String, val label: String, val description: String) {
+    LOW("low", "Niedrig", "Schnellste Analyse, geringste Kosten (Standard)."),
+    MEDIUM("medium", "Mittel", "Ausgewogen zwischen Tempo und Gründlichkeit."),
+    HIGH("high", "Hoch", "Gründlichere Analyse, dauert länger und kostet mehr."),
+    XHIGH("xhigh", "Sehr hoch", "Tiefstes Nachdenken, deutlich langsamer und teurer.");
+
+    companion object {
+        fun fromApiValue(value: String?): ThinkingLevel = entries.firstOrNull { it.apiValue == value } ?: LOW
+    }
+}
+
 data class AppState(
     val records: List<EpisodeRecord> = emptyList(),
     val selectedId: String? = null,
@@ -60,5 +71,6 @@ data class AppState(
     val apiKeyConfigured: Boolean = false,
     val defaultContext: String = "",
     val interestingFactsEnabled: Boolean = false,
+    val thinkingLevel: ThinkingLevel = ThinkingLevel.LOW,
     val settingsOpen: Boolean = false,
 )

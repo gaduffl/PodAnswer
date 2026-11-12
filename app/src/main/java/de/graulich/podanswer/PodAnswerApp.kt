@@ -50,6 +50,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
@@ -119,6 +120,7 @@ fun PodAnswerApp(viewModel: PodAnswerViewModel) {
             configured = state.apiKeyConfigured,
             defaultContext = state.defaultContext,
             interestingFactsEnabled = state.interestingFactsEnabled,
+            thinkingLevel = state.thinkingLevel,
             onDismiss = { viewModel.openSettings(false) },
             onSave = viewModel::saveSettings,
         )
@@ -478,12 +480,14 @@ private fun SettingsDialog(
     configured: Boolean,
     defaultContext: String,
     interestingFactsEnabled: Boolean,
+    thinkingLevel: ThinkingLevel,
     onDismiss: () -> Unit,
-    onSave: (String, String, Boolean) -> Unit,
+    onSave: (String, String, Boolean, ThinkingLevel) -> Unit,
 ) {
     var key by remember { mutableStateOf("") }
     var context by remember(defaultContext) { mutableStateOf(defaultContext) }
     var includeInterestingFacts by remember(interestingFactsEnabled) { mutableStateOf(interestingFactsEnabled) }
+    var selectedThinking by remember(thinkingLevel) { mutableStateOf(thinkingLevel) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Einstellungen") },
@@ -537,11 +541,31 @@ private fun SettingsDialog(
                         )
                     }
                 }
+                Spacer(Modifier.height(20.dp))
+                Text("Denktiefe", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Wie intensiv Gemini 4 Hydrogen vor der Antwort nachdenkt. Höhere Stufen sind langsamer und verbrauchen mehr Tokens.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Ink.copy(alpha = .7f),
+                )
+                ThinkingLevel.entries.forEach { level ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { selectedThinking = level },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = selectedThinking == level, onClick = { selectedThinking = level })
+                        Spacer(Modifier.width(8.dp))
+                        Column {
+                            Text(level.label, fontWeight = FontWeight.SemiBold)
+                            Text(level.description, style = MaterialTheme.typography.bodySmall, color = Ink.copy(alpha = .7f))
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
             Button(
-                onClick = { onSave(key, context, includeInterestingFacts) },
+                onClick = { onSave(key, context, includeInterestingFacts, selectedThinking) },
                 enabled = configured || key.isNotBlank(),
             ) {
                 Text("Speichern")
