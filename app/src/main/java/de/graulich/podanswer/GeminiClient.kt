@@ -161,7 +161,7 @@ internal class GeminiClient(
         includeTranscript: Boolean = true,
     ): JSONObject {
         val body = JSONObject().apply {
-            put("model", "gemini-3.8-flash")
+            put("model", "gemini-4-hydrogen")
             put("input", JSONArray().apply {
                 if (uri != null) put(JSONObject().put("type", "audio").put("uri", uri).put("mime_type", mimeType))
                 put(JSONObject().put("type", "text").put("text", prompt))

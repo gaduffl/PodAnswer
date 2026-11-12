@@ -1,6 +1,6 @@
 # PodAnswer
 
-PodAnswer is an Android app for sharing podcast episodes from Podcast Republic, transcribing the MP3 with Gemini 3.8 Flash, and answering the questions or themes promised by the episode title.
+PodAnswer is an Android app for sharing podcast episodes from Podcast Republic, transcribing the MP3 with Gemini 4 Hydrogen, and answering the questions or themes promised by the episode title.
 
 ## What works
 
