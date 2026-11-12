@@ -17,7 +17,15 @@ class SettingsStore(context: Context) {
         prefs.edit().putBoolean(INTERESTING_FACTS, value).apply()
     }
 
+    fun readThinkingLevel(): ThinkingLevel =
+        ThinkingLevel.fromApiValue(prefs.getString(THINKING_LEVEL, null))
+
+    fun saveThinkingLevel(value: ThinkingLevel) {
+        prefs.edit().putString(THINKING_LEVEL, value.apiValue).apply()
+    }
+
     private companion object {
+        const val THINKING_LEVEL = "thinking_level"
         const val DEFAULT_CONTEXT = "default_context"
         const val INTERESTING_FACTS = "interesting_facts_enabled"
     }

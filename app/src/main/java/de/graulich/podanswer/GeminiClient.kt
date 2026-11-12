@@ -41,13 +41,14 @@ internal class GeminiClient(
         episode: SharedEpisode,
         defaultContext: String,
         interestingFactsEnabled: Boolean,
+        thinkingLevel: ThinkingLevel = ThinkingLevel.LOW,
         onStage: (JobStage, String) -> Unit,
     ): PodcastAnalysis = withContext(Dispatchers.IO) {
         val info = audioInfoReader(audio)
         val chunks = AudioChunks.plan(info.durationMillis)
         if (chunks.size == 1) return@withContext analyzeFile(
             apiKey, audio, info.mimeType,
-            buildPrompt(episode, info.durationMillis, defaultContext, interestingFactsEnabled), onStage,
+            buildPrompt(episode, info.durationMillis, defaultContext, interestingFactsEnabled), thinkingLevel, onStage,
         )
 
         val exporter = audioChunkExporter ?: throw IOException("Die Audioaufteilung ist nicht verfügbar.")
@@ -61,7 +62,7 @@ internal class GeminiClient(
                     "\nDies ist $progress einer zusammenhängenden Folge. Analysiere den gesamten Abschnitt. " +
                     "Alle Zeiten beziehen sich auf diese Abschnittsdatei und beginnen bei 0. " +
                     "Der Themenstatus gilt vorläufig nur für diesen Abschnitt; die Gesamtbewertung erfolgt später."
-                val analysis = analyzeFile(apiKey, section, "audio/m4a", prompt) { stage, message ->
+                val analysis = analyzeFile(apiKey, section, "audio/m4a", prompt, thinkingLevel) { stage, message ->
                     onStage(stage, "$progress: $message")
                 }
                 offsetAnalysis(analysis, chunk, index + 1)
@@ -75,6 +76,7 @@ internal class GeminiClient(
             apiKey = apiKey,
             prompt = buildMergePrompt(episode, parts, defaultContext, interestingFactsEnabled),
             includeTranscript = false,
+            thinkingLevel = thinkingLevel,
         ).put("transcript", JSONArray())
         val result = parseAnalysis(combined)
         val sourceEvidence = parts.flatMap { it.topics }.flatMap { it.evidence }.toSet()
@@ -89,6 +91,7 @@ internal class GeminiClient(
         audio: File,
         mimeType: String,
         prompt: String,
+        thinkingLevel: ThinkingLevel,
         onStage: (JobStage, String) -> Unit,
     ): PodcastAnalysis {
         onStage(JobStage.UPLOADING, "Audio wird zu Gemini hochgeladen …")
@@ -96,7 +99,7 @@ internal class GeminiClient(
         return try {
             val active = waitUntilActive(apiKey, uploaded.first, uploaded.second)
             onStage(JobStage.PROCESSING, "Podcast wird transkribiert und ausgewertet …")
-            parseAnalysis(requestResult(apiKey, prompt, active.second, mimeType))
+            parseAnalysis(requestResult(apiKey, prompt, active.second, mimeType, thinkingLevel = thinkingLevel))
         } finally {
             withContext(NonCancellable) {
                 withTimeoutOrNull(30_000) { runCatching { deleteFile(apiKey, uploaded.first) } }
@@ -159,6 +162,7 @@ internal class GeminiClient(
         uri: String? = null,
         mimeType: String = "audio/mpeg",
         includeTranscript: Boolean = true,
+        thinkingLevel: ThinkingLevel = ThinkingLevel.LOW,
     ): JSONObject {
         val body = JSONObject().apply {
             put("model", "gemini-4-hydrogen")
@@ -172,7 +176,7 @@ internal class GeminiClient(
                 .put("schema", responseSchema(includeTranscript)))
             put("generation_config", JSONObject()
                 .put("max_output_tokens", 65_536)
-                .put("thinking_level", "low"))
+                .put("thinking_level", thinkingLevel.apiValue))
         }.toString()
         val request = Request.Builder()
             .url("$apiBaseUrl/v1beta/interactions")
