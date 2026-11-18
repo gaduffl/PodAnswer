@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release tag, for example v0.2.0"
-        required: true
-        default: "v0.1.5"
+        description: "Release tag, for example v0.2.0. Leave empty to use the app version from app/build.gradle.kts"
+        required: false
+        default: ""
   push:
     branches:
       - main
@@ -71,11 +71,14 @@ jobs:
           else
             RELEASE_TAG="latest"
           fi
+          APP_VERSION="$(awk -F'"' '/versionName = / { print $2; exit }' app/build.gradle.kts)"
+          if [[ -z "$RELEASE_TAG" ]]; then
+            RELEASE_TAG="v$APP_VERSION"
+          fi
           if [[ "$RELEASE_TAG" != "latest" && ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
             echo "Invalid release tag: $RELEASE_TAG" >&2
             exit 1
           fi
-          APP_VERSION="$(awk -F'"' '/versionName = / { print $2; exit }' app/build.gradle.kts)"
           if [[ ! "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
             echo "Invalid app version: $APP_VERSION" >&2
             exit 1
@@ -109,6 +112,8 @@ jobs:
           sha256sum "PodAnswer-${APK_VERSION_TAG}.apk" > "PodAnswer-${APK_VERSION_TAG}.apk.sha256"
 
       - name: Upload signed APK artifact
+        # Nur Backup: ein volles Artefakt-Kontingent soll die Veröffentlichung nicht blockieren
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: PodAnswer-signed-release
