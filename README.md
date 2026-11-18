@@ -40,7 +40,7 @@ Release builds require the following environment variables and fail if signing i
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
 
-Every pull request against `main` additionally runs `PR debug APK`: unit tests plus a debug build (package `de.graulich.podanswer.debug`, installs next to the release app). The APK is attached to the run as a workflow artifact for three days; nothing is released.
+Every pull request against `main` additionally runs `PR test APK`: unit tests plus a signed release build that installs as an update over the published app. The APK is attached to the run as a workflow artifact for three days; nothing is released.
 
 The GitHub Actions workflow reads the same values from repository secrets. It runs only when started manually or when a `v*` tag is pushed, so ordinary source-code pushes consume no Actions minutes. A manual workflow run publishes a verified, signed release APK as the `PodAnswer-signed-release` workflow artifact with seven-day retention. Pushing a tag such as `v0.1.0` additionally creates a GitHub Release containing the APK and SHA-256 checksum.
 
