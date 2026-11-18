@@ -4,9 +4,12 @@ import android.app.Application
 import android.content.ContentResolver
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.transformer.ExportException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -31,7 +34,12 @@ class PodAnswerViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val initialRecords = store.load().map { record ->
         if (record.stage !in setOf(JobStage.IDLE, JobStage.COMPLETE, JobStage.ERROR))
-            record.copy(stage = JobStage.ERROR, error = "Die Verarbeitung wurde von Android unterbrochen. Du kannst sie erneut starten; eine bereits geladene MP3 wird wiederverwendet.")
+            record.copy(
+                stage = JobStage.ERROR,
+                error = "Die Verarbeitung wurde von Android unterbrochen. Du kannst sie erneut starten; eine bereits geladene MP3 wird wiederverwendet.",
+                errorDetails = "Die App wurde beendet, während die Analyse in der Phase ${record.stage.name} war. " +
+                    "Es gibt dazu keine Ausnahme, weil Android den Prozess gestoppt hat.",
+            )
         else record
     }
     private val _state = MutableStateFlow(
@@ -115,7 +123,7 @@ class PodAnswerViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun retry(id: String) {
         if (!keyStore.hasKey()) { _state.update { it.copy(settingsOpen = true) }; return }
-        updateRecord(id) { it.copy(stage = JobStage.DOWNLOADING, error = null) }
+        updateRecord(id) { it.copy(stage = JobStage.DOWNLOADING, error = null, errorDetails = null) }
         runAnalysis(id)
     }
 
@@ -139,10 +147,13 @@ class PodAnswerViewModel(application: Application) : AndroidViewModel(applicatio
                 _state.update { it.copy(busyStage = stage, busyMessage = message) }
                 updateRecord(id, persist = false) { it.copy(stage = stage, progressMessage = message) }
             }
-            updateRecord(id) { it.copy(analysis = analysis, stage = JobStage.COMPLETE, error = null) }
+            updateRecord(id) { it.copy(analysis = analysis, stage = JobStage.COMPLETE, error = null, errorDetails = null) }
             _state.update { it.copy(busyStage = JobStage.COMPLETE, busyMessage = "Analyse abgeschlossen") }
         } catch (throwable: Throwable) {
-            updateRecord(id) { it.copy(stage = JobStage.ERROR, error = readableError(throwable)) }
+            val failedRecord = _state.value.records.firstOrNull { it.id == id }
+            val details = runCatching { withContext(NonCancellable + Dispatchers.IO) { errorDetails(throwable, failedRecord) } }
+                .getOrElse { "Fehlerdetails konnten nicht erstellt werden: $it" }
+            updateRecord(id) { it.copy(stage = JobStage.ERROR, error = readableError(throwable), errorDetails = details) }
             _state.update { it.copy(busyStage = JobStage.ERROR, busyMessage = readableError(throwable)) }
         }
     }
@@ -180,6 +191,50 @@ class PodAnswerViewModel(application: Application) : AndroidViewModel(applicatio
         val records = _state.value.records.map { if (it.id == id) transform(it) else it }
         if (persist) store.save(records)
         _state.update { it.copy(records = records) }
+    }
+
+    private fun errorDetails(throwable: Throwable, record: EpisodeRecord?): String {
+        val app = getApplication<Application>()
+        val version = runCatching { app.packageManager.getPackageInfo(app.packageName, 0).versionName }.getOrNull()
+        val audio = record?.episode?.localAudioPath?.let(::File)
+        val audioDescription = when {
+            audio == null -> ""
+            !audio.exists() -> "${audio.name} (nicht vorhanden)"
+            else -> {
+                val info = runCatching { readAudioInfo(audio) }
+                val infoText = info.fold(
+                    { "${formatMillis(it.durationMillis)}, ${it.mimeType}" },
+                    { "Metadaten nicht lesbar: ${it.message ?: it.javaClass.simpleName}" },
+                )
+                "${audio.name}, ${"%.1f".format(java.util.Locale.ROOT, audio.length() / 1_048_576.0)} MB, $infoText"
+            }
+        }
+        val context = listOf(
+            "App-Version" to version.orEmpty(),
+            "Gerät" to "${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
+            "Phase" to record?.stage?.name.orEmpty(),
+            "Letzter Schritt" to record?.progressMessage.orEmpty(),
+            "Denkstufe" to _state.value.thinkingLevel.apiValue,
+            "Episode" to record?.episode?.title.orEmpty(),
+            "Podcast" to record?.episode?.podcast.orEmpty(),
+            "Media-URL" to record?.episode?.mediaUrl.orEmpty(),
+            "Audiodatei" to audioDescription,
+        )
+        return ErrorReport.build(throwable, System.currentTimeMillis(), context, ::describeException)
+    }
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun describeException(t: Throwable): String? = when (t) {
+        is AudioChunkExportException ->
+            "Abschnitt: ${formatMillis(t.chunk.startMillis)} bis ${formatMillis(t.chunk.endMillis)}"
+        is ExportException -> "Media3-Fehlercode: ${t.errorCodeName} (${t.errorCode})"
+        is GeminiApiException -> "HTTP ${t.statusCode} bei ${t.endpoint}\nAntwort: ${t.responseBody.take(4_000)}"
+        else -> null
+    }
+
+    private fun formatMillis(millis: Long): String {
+        val totalSeconds = millis / 1_000
+        return "%d:%02d:%02d".format(totalSeconds / 3_600, totalSeconds / 60 % 60, totalSeconds % 60)
     }
 
     private fun fail(t: Throwable) = _state.update { it.copy(busyStage = JobStage.ERROR, busyMessage = readableError(t)) }

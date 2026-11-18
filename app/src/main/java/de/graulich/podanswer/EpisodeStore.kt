@@ -31,6 +31,7 @@ class EpisodeStore(context: Context) {
         put("createdAt", record.createdAt)
         put("stage", record.stage.name)
         put("error", record.error)
+        put("errorDetails", record.errorDetails)
         put("episode", episodeToJson(record.episode))
         record.analysis?.let { put("analysis", analysisToJson(it)) }
     }
@@ -40,6 +41,7 @@ class EpisodeStore(context: Context) {
         createdAt = json.getLong("createdAt"),
         stage = runCatching { JobStage.valueOf(json.optString("stage")) }.getOrDefault(JobStage.IDLE),
         error = json.optString("error").takeIf { it.isNotBlank() && it != "null" },
+        errorDetails = json.optString("errorDetails").takeIf { it.isNotBlank() && it != "null" },
         episode = episodeFromJson(json.getJSONObject("episode")),
         analysis = json.optJSONObject("analysis")?.let(::analysisFromJson),
     )

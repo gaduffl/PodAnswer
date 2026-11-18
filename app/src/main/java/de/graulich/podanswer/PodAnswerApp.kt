@@ -1,8 +1,11 @@
 package de.graulich.podanswer
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.media.MediaPlayer
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -27,6 +30,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Pause
@@ -70,6 +74,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -258,7 +263,7 @@ private fun DetailScreen(record: EpisodeRecord, onBack: () -> Unit, onRetry: () 
                 }
             }
             when {
-                record.stage == JobStage.ERROR -> ErrorPanel(record.error.orEmpty(), onRetry)
+                record.stage == JobStage.ERROR -> ErrorPanel(record.error.orEmpty(), record.errorDetails, record.episode.title, onRetry)
                 record.analysis == null -> ProcessingPanel(record.stage, record.progressMessage)
                 else -> {
                     TabRow(selectedTabIndex = tab, containerColor = Paper) {
@@ -297,13 +302,58 @@ private fun ProcessingPanel(stage: JobStage, message: String) {
 }
 
 @Composable
-private fun ErrorPanel(error: String, onRetry: () -> Unit) {
-    Column(Modifier.padding(24.dp)) {
+private fun ErrorPanel(error: String, details: String?, episodeTitle: String, onRetry: () -> Unit) {
+    val context = LocalContext.current
+    var showDetails by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp)) {
         Text("Analyse fehlgeschlagen", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Coral)
         Spacer(Modifier.height(8.dp))
         SelectionContainer { Text(error) }
         Spacer(Modifier.height(18.dp))
         Button(onClick = onRetry) { Text("Erneut versuchen") }
+        if (details != null) {
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = { showDetails = !showDetails }) {
+                Text(if (showDetails) "Fehlerdetails ausblenden" else "Fehlerdetails anzeigen")
+            }
+        }
+        if (details != null && showDetails) {
+            Spacer(Modifier.height(8.dp))
+            Surface(color = Mist, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
+                SelectionContainer {
+                    Text(
+                        details,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(12.dp),
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FilledTonalButton(onClick = {
+                    context.getSystemService(ClipboardManager::class.java)
+                        ?.setPrimaryClip(ClipData.newPlainText("PodAnswer-Fehlerdetails", details))
+                    Toast.makeText(context, "Fehlerdetails kopiert", Toast.LENGTH_SHORT).show()
+                }) {
+                    Icon(Icons.Default.ContentCopy, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Kopieren")
+                }
+                FilledTonalButton(onClick = {
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_SUBJECT, "PodAnswer-Fehler: $episodeTitle")
+                        putExtra(Intent.EXTRA_TEXT, "$error\n\n$details")
+                    }
+                    context.startActivity(Intent.createChooser(intent, "Fehlerdetails teilen"))
+                }) {
+                    Icon(Icons.Default.Share, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Teilen")
+                }
+            }
+        }
     }
 }
 
