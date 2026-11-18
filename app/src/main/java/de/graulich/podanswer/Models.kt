@@ -48,6 +48,7 @@ data class EpisodeRecord(
     val analysis: PodcastAnalysis? = null,
     val stage: JobStage = JobStage.IDLE,
     val error: String? = null,
+    val errorDetails: String? = null,
     val progressMessage: String = "",
 )
 

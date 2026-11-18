@@ -55,6 +55,9 @@ internal fun readAudioInfo(audio: File): AudioInfo {
     }
 }
 
+internal class AudioChunkExportException(val chunk: AudioChunk, cause: Throwable) :
+    IOException("Der Audioabschnitt konnte nicht vorbereitet werden.", cause)
+
 internal fun interface AudioChunkExporter {
     suspend fun export(audio: File, chunk: AudioChunk): File
 }
@@ -79,7 +82,7 @@ internal class AndroidAudioChunkExporter(context: Context) : AudioChunkExporter 
 
                         override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
                             if (continuation.isActive) continuation.resumeWithException(
-                                IOException("Der Audioabschnitt konnte nicht vorbereitet werden.", exportException)
+                                AudioChunkExportException(chunk, exportException)
                             )
                         }
                     })

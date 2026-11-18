@@ -423,7 +423,12 @@ internal class GeminiClient(
     private fun apiError(response: Response): IOException {
         val raw = response.body?.string().orEmpty()
         val message = runCatching { JSONObject(raw).getJSONObject("error").getString("message") }.getOrDefault(raw)
-        return IOException("Gemini-Fehler ${response.code}: ${message.take(500)}")
+        return GeminiApiException(
+            message = "Gemini-Fehler ${response.code}: ${message.take(500)}",
+            statusCode = response.code,
+            endpoint = "${response.request.method} ${response.request.url.encodedPath}",
+            responseBody = raw,
+        )
     }
 
     private suspend fun Call.await(): Response = suspendCancellableCoroutine { continuation ->
@@ -438,3 +443,11 @@ internal class GeminiClient(
         })
     }
 }
+
+/** Keeps the raw API answer so the error details can show more than the short user-facing message. */
+internal class GeminiApiException(
+    message: String,
+    val statusCode: Int,
+    val endpoint: String,
+    val responseBody: String,
+) : IOException(message)
