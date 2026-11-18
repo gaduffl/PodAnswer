@@ -15,6 +15,12 @@ PodAnswer is an Android app for sharing podcast episodes from Podcast Republic, 
 - Saves the analysis and audio locally, supports transcript search, retry, deletion, and text export.
 - Encrypts the Gemini API key with Android Keystore.
 
+## Export to Podcast Transcriber via OneDrive
+
+Each finished analysis has a cloud button (**Nach OneDrive exportieren**); the cloud button on the start screen exports all finished analyses into one file. Android's save dialog opens: choose OneDrive and a folder such as `PodAnswer`. The app writes a `*.podanswer.json` file with the episode metadata, the timestamped transcript, the summary, and every answered title question with its evidence. Local file paths are not included.
+
+On the PC, Podcast Transcriber imports these files from the synced OneDrive folder (**Settings → PodAnswer folder**, then **Import from PodAnswer**). Exporting the same episode again updates it there instead of creating a duplicate.
+
 ## Build
 
 Requirements: Android Studio with JDK 17 and Android SDK 35.
@@ -33,6 +39,8 @@ Release builds require the following environment variables and fail if signing i
 - `ANDROID_KEYSTORE_PASSWORD`
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
+
+Every pull request against `main` additionally runs `PR test APK`: unit tests plus a signed release build that installs as an update over the published app. The APK is attached to the run as a workflow artifact for three days; nothing is released.
 
 The GitHub Actions workflow reads the same values from repository secrets. It runs only when started manually or when a `v*` tag is pushed, so ordinary source-code pushes consume no Actions minutes. A manual workflow run publishes a verified, signed release APK as the `PodAnswer-signed-release` workflow artifact with seven-day retention. Pushing a tag such as `v0.1.0` additionally creates a GitHub Release containing the APK and SHA-256 checksum.
 

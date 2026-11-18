@@ -1,0 +1,73 @@
+name: PR test APK
+
+# Builds a signed release APK for every pull request against main, so it installs
+# as an update over the published app. Publishes nothing: no release, no tag,
+# only a short-lived workflow artifact.
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-test-apk-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and build signed APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PATH: /tmp/podanswer-release.jks
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: true
+
+      - name: Restore release keystore
+        shell: bash
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "Signing secrets are not available to this pull request (for example from a fork)." >&2
+            exit 1
+          fi
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+
+      - name: Run unit tests and build signed release APK
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon testReleaseUnitTest assembleRelease
+
+      - name: Verify APK signature
+        shell: bash
+        run: |
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          "$APKSIGNER" verify --verbose app/build/outputs/apk/release/app-release.apk
+          mkdir -p out
+          VERSION="$(awk -F'"' '/versionName = / { print $2; exit }' app/build.gradle.kts)"
+          cp app/build/outputs/apk/release/app-release.apk "out/PodAnswer-v${VERSION}-pr${{ github.event.pull_request.number }}.apk"
+
+      - name: Upload signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PodAnswer-signed-pr${{ github.event.pull_request.number }}
+          path: out/*.apk
+          if-no-files-found: error
+          retention-days: 3

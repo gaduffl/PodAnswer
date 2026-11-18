@@ -3,6 +3,7 @@ package de.graulich.podanswer
 import android.content.Context
 import android.content.Intent
 import android.media.MediaPlayer
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -27,6 +28,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Pause
@@ -91,6 +93,17 @@ fun PodAnswerApp(viewModel: PodAnswerViewModel) {
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(viewModel::importAudio)
     }
+    var exportIds by remember { mutableStateOf<List<String>>(emptyList()) }
+    val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(PodAnswerExport.MIME_TYPE)) { uri ->
+        val ids = exportIds
+        exportIds = emptyList()
+        if (uri != null && ids.isNotEmpty()) viewModel.exportAnalyses(uri, ids) { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
+    }
+    val startExport: (List<EpisodeRecord>) -> Unit = { records ->
+        val exportable = PodAnswerExport.exportable(records)
+        if (exportable.isEmpty()) Toast.makeText(context, "Keine abgeschlossene Analyse zum Exportieren.", Toast.LENGTH_SHORT).show()
+        else { exportIds = exportable.map { it.id }; exporter.launch(PodAnswerExport.fileName(exportable)) }
+    }
 
     MaterialTheme(
         colorScheme = MaterialTheme.colorScheme.copy(
@@ -111,9 +124,10 @@ fun PodAnswerApp(viewModel: PodAnswerViewModel) {
                 )
                 state.selectedId != null -> state.records.firstOrNull { it.id == state.selectedId }?.let { record ->
                     DetailScreen(record, onBack = { viewModel.openRecord(null) }, onRetry = { viewModel.retry(record.id) },
-                        onDelete = { viewModel.deleteRecord(record.id) }, onShare = { shareAnalysis(context, record) })
-                } ?: HomeScreen(state.records, viewModel::openRecord, { picker.launch(arrayOf("audio/*")) }, { viewModel.openSettings(true) })
-                else -> HomeScreen(state.records, viewModel::openRecord, { picker.launch(arrayOf("audio/*")) }, { viewModel.openSettings(true) })
+                        onDelete = { viewModel.deleteRecord(record.id) }, onShare = { shareAnalysis(context, record) },
+                        onExport = { startExport(listOf(record)) })
+                } ?: HomeScreen(state.records, viewModel::openRecord, { picker.launch(arrayOf("audio/*")) }, { viewModel.openSettings(true) }, { startExport(state.records) })
+                else -> HomeScreen(state.records, viewModel::openRecord, { picker.launch(arrayOf("audio/*")) }, { viewModel.openSettings(true) }, { startExport(state.records) })
             }
         }
         if (state.settingsOpen) SettingsDialog(
@@ -129,9 +143,10 @@ fun PodAnswerApp(viewModel: PodAnswerViewModel) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HomeScreen(records: List<EpisodeRecord>, onOpen: (String?) -> Unit, onPick: () -> Unit, onSettings: () -> Unit) {
+private fun HomeScreen(records: List<EpisodeRecord>, onOpen: (String?) -> Unit, onPick: () -> Unit, onSettings: () -> Unit, onExportAll: () -> Unit) {
     Scaffold(
         topBar = { TopAppBar(title = { Text("PodAnswer", fontWeight = FontWeight.Bold) }, actions = {
+            if (PodAnswerExport.exportable(records).isNotEmpty()) IconButton(onClick = onExportAll) { Icon(Icons.Default.CloudUpload, "Alle Analysen nach OneDrive exportieren") }
             IconButton(onClick = onSettings) { Icon(Icons.Default.Settings, "Einstellungen") }
         }) },
         bottomBar = { NavigationBar(containerColor = Paper) {
@@ -241,7 +256,7 @@ private fun MetadataChip(label: String, value: String) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DetailScreen(record: EpisodeRecord, onBack: () -> Unit, onRetry: () -> Unit, onDelete: () -> Unit, onShare: () -> Unit) {
+private fun DetailScreen(record: EpisodeRecord, onBack: () -> Unit, onRetry: () -> Unit, onDelete: () -> Unit, onShare: () -> Unit, onExport: () -> Unit) {
     var tab by remember { mutableIntStateOf(0) }
     var confirmDelete by remember { mutableStateOf(false) }
     val player = rememberAudioPlayer(record.episode.localAudioPath)
@@ -249,6 +264,7 @@ private fun DetailScreen(record: EpisodeRecord, onBack: () -> Unit, onRetry: () 
         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Zurück") }
     }, actions = {
         if (record.analysis != null) IconButton(onClick = onShare) { Icon(Icons.Default.Share, "Teilen") }
+        if (record.analysis != null && record.stage == JobStage.COMPLETE) IconButton(onClick = onExport) { Icon(Icons.Default.CloudUpload, "Nach OneDrive exportieren") }
         IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, "Löschen") }
     }) }) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
