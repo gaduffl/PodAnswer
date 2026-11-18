@@ -154,6 +154,20 @@ class PodAnswerViewModel(application: Application) : AndroidViewModel(applicatio
         _state.update { it.copy(records = records, selectedId = null) }
     }
 
+    /** Writes the given analyses to a document the user picked, e.g. a file in their OneDrive folder. */
+    fun exportAnalyses(uri: Uri, ids: List<String>, onDone: (String) -> Unit) = viewModelScope.launch {
+        val records = PodAnswerExport.exportable(_state.value.records.filter { it.id in ids })
+        val message = runCatching {
+            withContext(Dispatchers.IO) {
+                val json = PodAnswerExport.toJson(records)
+                getApplication<Application>().contentResolver.openOutputStream(uri, "wt")?.use { it.write(json.toByteArray(Charsets.UTF_8)) }
+                    ?: throw IOException("Die Exportdatei konnte nicht geöffnet werden.")
+            }
+            if (records.size == 1) "Analyse exportiert." else "${records.size} Analysen exportiert."
+        }.getOrElse { "Export fehlgeschlagen: ${readableError(it)}" }
+        onDone(message)
+    }
+
     private suspend fun download(url: String, id: String): File = withContext(Dispatchers.IO) {
         _state.update { it.copy(busyStage = JobStage.DOWNLOADING, busyMessage = "MP3 wird geladen …") }
         val targetDir = File(getApplication<Application>().filesDir, "audio").apply { mkdirs() }

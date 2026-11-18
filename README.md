@@ -15,6 +15,12 @@ PodAnswer is an Android app for sharing podcast episodes from Podcast Republic, 
 - Saves the analysis and audio locally, supports transcript search, retry, deletion, and text export.
 - Encrypts the Gemini API key with Android Keystore.
 
+## Export to Podcast Transcriber via OneDrive
+
+Each finished analysis has a cloud button (**Nach OneDrive exportieren**); the cloud button on the start screen exports all finished analyses into one file. Android's save dialog opens: choose OneDrive and a folder such as `PodAnswer`. The app writes a `*.podanswer.json` file with the episode metadata, the timestamped transcript, the summary, and every answered title question with its evidence. Local file paths are not included.
+
+On the PC, Podcast Transcriber imports these files from the synced OneDrive folder (**Settings → PodAnswer folder**, then **Import from PodAnswer**). Exporting the same episode again updates it there instead of creating a duplicate.
+
 ## Build
 
 Requirements: Android Studio with JDK 17 and Android SDK 35.
