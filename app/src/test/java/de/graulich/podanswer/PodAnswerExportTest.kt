@@ -41,5 +41,6 @@ class PodAnswerExportTest {
     fun namesFilesSafely() {
         assertEquals("Heart Doc VIP - Episode 515 Calcium - 1970-01-01.podanswer.json", PodAnswerExport.fileName(listOf(done), now = 0))
         assertEquals("PodAnswer-Export 1970-01-01.podanswer.json", PodAnswerExport.fileName(listOf(done, done.copy(id = "c")), now = 0))
+        assertEquals("Heart Doc VIP - Episode 515 Calcium - a1.podanswer.json", PodAnswerExport.syncFileName(done))
     }
 }

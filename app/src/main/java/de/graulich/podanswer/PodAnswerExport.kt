@@ -38,6 +38,12 @@ object PodAnswerExport {
         return sanitize(base) + SUFFIX
     }
 
+    /** Stable per-analysis file name for automatic sync; the same analysis always overwrites its own file. */
+    fun syncFileName(record: EpisodeRecord): String {
+        val base = listOf(record.episode.podcast, record.episode.title, record.id.take(8)).filter { it.isNotBlank() }.joinToString(" - ")
+        return sanitize(base) + SUFFIX
+    }
+
     internal fun sanitize(name: String): String =
         name.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), " ").replace(Regex("\\s+"), " ").trim().take(120).trimEnd('.', ' ')
             .ifBlank { "PodAnswer" }
