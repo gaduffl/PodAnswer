@@ -3,6 +3,7 @@ package de.graulich.podanswer
 import android.content.Context
 import android.content.Intent
 import android.media.MediaPlayer
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -71,7 +72,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -137,7 +140,16 @@ fun PodAnswerApp(viewModel: PodAnswerViewModel) {
             thinkingLevel = state.thinkingLevel,
             onDismiss = { viewModel.openSettings(false) },
             onSave = viewModel::saveSettings,
+            oneDriveClientId = state.oneDriveClientId,
+            oneDriveConnected = state.oneDriveConnected,
+            oneDriveStatus = state.oneDriveStatus,
+            onConnectOneDrive = viewModel::connectOneDrive,
+            onDisconnectOneDrive = viewModel::disconnectOneDrive,
+            onSyncOneDrive = viewModel::syncOneDrive,
         )
+        state.oneDriveLogin?.let { login ->
+            OneDriveLoginDialog(login, onCancel = viewModel::cancelOneDriveLogin)
+        }
     }
 }
 
@@ -499,7 +511,14 @@ private fun SettingsDialog(
     thinkingLevel: ThinkingLevel,
     onDismiss: () -> Unit,
     onSave: (String, String, Boolean, ThinkingLevel) -> Unit,
+    oneDriveClientId: String,
+    oneDriveConnected: Boolean,
+    oneDriveStatus: String,
+    onConnectOneDrive: (String) -> Unit,
+    onDisconnectOneDrive: () -> Unit,
+    onSyncOneDrive: () -> Unit,
 ) {
+    var clientId by remember(oneDriveClientId) { mutableStateOf(oneDriveClientId) }
     var key by remember { mutableStateOf("") }
     var context by remember(defaultContext) { mutableStateOf(defaultContext) }
     var includeInterestingFacts by remember(interestingFactsEnabled) { mutableStateOf(interestingFactsEnabled) }
@@ -558,6 +577,9 @@ private fun SettingsDialog(
                     }
                 }
                 Spacer(Modifier.height(20.dp))
+                OneDriveSection(clientId, { clientId = it }, oneDriveConnected, oneDriveStatus,
+                    { onConnectOneDrive(clientId) }, onDisconnectOneDrive, onSyncOneDrive)
+                Spacer(Modifier.height(20.dp))
                 Text("Denktiefe", fontWeight = FontWeight.SemiBold)
                 Text(
                     "Wie intensiv Gemini 4 Hydrogen vor der Antwort nachdenkt. Höhere Stufen sind langsamer und verbrauchen mehr Tokens.",
@@ -614,4 +636,75 @@ private fun shareAnalysis(context: Context, record: EpisodeRecord) {
     }
     val intent = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_SUBJECT, record.episode.title); putExtra(Intent.EXTRA_TEXT, text) }
     context.startActivity(Intent.createChooser(intent, "Analyse teilen"))
+}
+
+@Composable
+private fun OneDriveSection(
+    clientId: String,
+    onClientId: (String) -> Unit,
+    connected: Boolean,
+    status: String,
+    onConnect: () -> Unit,
+    onDisconnect: () -> Unit,
+    onSync: () -> Unit,
+) {
+    Text("OneDrive-Sync", fontWeight = FontWeight.SemiBold)
+    Text(
+        if (connected) "Jede fertige Analyse wird automatisch nach OneDrive › Apps › PodAnswer hochgeladen. Podcast Transcriber importiert sie von dort."
+        else "Lädt jede fertige Analyse automatisch nach OneDrive hoch, damit Podcast Transcriber sie importiert. Einmalig die Client-ID deiner App-Registrierung eintragen und verbinden.",
+        style = MaterialTheme.typography.bodySmall,
+        color = Ink.copy(alpha = .7f),
+    )
+    Spacer(Modifier.height(8.dp))
+    if (!connected) {
+        OutlinedTextField(
+            clientId, onClientId,
+            label = { Text("Client-ID (Microsoft Entra)") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+        )
+        Spacer(Modifier.height(8.dp))
+        FilledTonalButton(onClick = onConnect, enabled = clientId.isNotBlank()) { Text("Mit OneDrive verbinden") }
+    } else {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilledTonalButton(onClick = onSync) { Text("Jetzt synchronisieren") }
+            TextButton(onClick = onDisconnect) { Text("Trennen") }
+        }
+    }
+    if (status.isNotBlank()) {
+        Spacer(Modifier.height(6.dp))
+        Text(status, style = MaterialTheme.typography.bodySmall, color = Teal)
+    }
+}
+
+@Composable
+private fun OneDriveLoginDialog(login: OneDriveLogin, onCancel: () -> Unit) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text("Bei OneDrive anmelden") },
+        text = {
+            Column {
+                Text("Öffne die Anmeldeseite, gib diesen Code ein und melde dich mit deinem Microsoft-Konto an. PodAnswer verbindet sich danach automatisch.")
+                Spacer(Modifier.height(16.dp))
+                SelectionContainer {
+                    Text(login.userCode, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Teal)
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Warte auf Anmeldung …", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                clipboard.setText(AnnotatedString(login.userCode))
+                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(login.verificationUri))) }
+            }) { Text("Code kopieren & öffnen") }
+        },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Abbrechen") } },
+    )
 }

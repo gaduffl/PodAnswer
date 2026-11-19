@@ -10,9 +10,12 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-class ApiKeyStore(context: Context) {
-    private val prefs = context.getSharedPreferences("secure_settings", Context.MODE_PRIVATE)
-    private val alias = "podanswer_gemini_key"
+class ApiKeyStore(
+    context: Context,
+    prefsName: String = "secure_settings",
+    private val alias: String = "podanswer_gemini_key",
+) {
+    private val prefs = context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
 
     fun hasKey() = prefs.contains("key") && prefs.contains("iv")
 
@@ -23,6 +26,10 @@ class ApiKeyStore(context: Context) {
             .putString("key", Base64.encodeToString(cipher.doFinal(value.trim().toByteArray()), Base64.NO_WRAP))
             .putString("iv", Base64.encodeToString(cipher.iv, Base64.NO_WRAP))
             .apply()
+    }
+
+    fun clear() {
+        prefs.edit().remove("key").remove("iv").apply()
     }
 
     fun read(): String? = runCatching {

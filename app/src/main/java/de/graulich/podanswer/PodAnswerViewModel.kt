@@ -7,6 +7,9 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -28,6 +31,12 @@ class PodAnswerViewModel(application: Application) : AndroidViewModel(applicatio
     private val rssResolver = RssDescriptionResolver()
     private val downloader = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS).readTimeout(10, TimeUnit.MINUTES).build()
+    private val oneDriveStore = OneDriveStore(application)
+    private val oneDrive = OneDriveClient(OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS).readTimeout(2, TimeUnit.MINUTES).build())
+    private val syncLock = Mutex()
+    private var oneDriveAccessToken: String? = null
+    private var oneDriveAccessExpiry = 0L
 
     private val initialRecords = store.load().map { record ->
         if (record.stage !in setOf(JobStage.IDLE, JobStage.COMPLETE, JobStage.ERROR))
@@ -41,13 +50,107 @@ class PodAnswerViewModel(application: Application) : AndroidViewModel(applicatio
             defaultContext = settingsStore.readDefaultContext(),
             interestingFactsEnabled = settingsStore.readInterestingFactsEnabled(),
             thinkingLevel = settingsStore.readThinkingLevel(),
+            oneDriveClientId = oneDriveStore.clientId(),
+            oneDriveConnected = oneDriveStore.isConnected(),
         )
     )
     val state: StateFlow<AppState> = _state.asStateFlow()
 
     init {
         store.save(initialRecords)
+        syncOneDrive()
     }
+
+    // --- OneDrive auto-sync -------------------------------------------------------------
+
+    fun connectOneDrive(clientId: String) = viewModelScope.launch {
+        val id = clientId.trim()
+        if (id.isBlank()) { setOneDriveStatus("Bitte zuerst die Client-ID eintragen."); return@launch }
+        oneDriveStore.saveClientId(id)
+        _state.update { it.copy(oneDriveClientId = id) }
+        val code = try {
+            withContext(Dispatchers.IO) { oneDrive.startDeviceLogin(id) }
+        } catch (t: Throwable) {
+            setOneDriveStatus(readableError(t)); return@launch
+        }
+        _state.update { it.copy(oneDriveLogin = OneDriveLogin(code.userCode, code.verificationUri), oneDriveStatus = "Warte auf Anmeldung bei Microsoft …") }
+        var interval = code.intervalSeconds
+        val deadline = System.currentTimeMillis() + code.expiresInSeconds * 1000L
+        while (System.currentTimeMillis() < deadline && _state.value.oneDriveLogin != null) {
+            delay(interval * 1000L)
+            val result = runCatching { withContext(Dispatchers.IO) { oneDrive.pollDeviceLogin(id, code.deviceCode) } }
+                .getOrDefault(OneDriveClient.PollResult.Pending)
+            when (result) {
+                OneDriveClient.PollResult.Pending -> Unit
+                OneDriveClient.PollResult.SlowDown -> interval += 5
+                is OneDriveClient.PollResult.Failed -> {
+                    _state.update { it.copy(oneDriveLogin = null, oneDriveStatus = result.message) }; return@launch
+                }
+                is OneDriveClient.PollResult.Success -> {
+                    val refresh = result.tokens.refreshToken
+                    if (refresh == null) {
+                        _state.update { it.copy(oneDriveLogin = null, oneDriveStatus = "Microsoft hat kein Refresh-Token geliefert.") }
+                        return@launch
+                    }
+                    oneDriveStore.saveRefreshToken(refresh)
+                    cacheAccessToken(result.tokens)
+                    _state.update { it.copy(oneDriveLogin = null, oneDriveConnected = true, oneDriveStatus = "Mit OneDrive verbunden.") }
+                    syncPending()
+                    return@launch
+                }
+            }
+        }
+        if (_state.value.oneDriveLogin != null) {
+            _state.update { it.copy(oneDriveLogin = null, oneDriveStatus = "Der Anmeldecode ist abgelaufen. Bitte erneut verbinden.") }
+        }
+    }
+
+    fun cancelOneDriveLogin() = _state.update { it.copy(oneDriveLogin = null, oneDriveStatus = "") }
+
+    fun disconnectOneDrive() {
+        oneDriveStore.disconnect()
+        oneDriveAccessToken = null
+        _state.update { it.copy(oneDriveConnected = false, oneDriveStatus = "OneDrive-Sync ist ausgeschaltet.") }
+    }
+
+    fun syncOneDrive() { viewModelScope.launch { syncPending() } }
+
+    /** Uploads every finished analysis that is not in OneDrive yet. Safe to call often. */
+    private suspend fun syncPending() = syncLock.withLock {
+        val clientId = oneDriveStore.clientId()
+        val refreshToken = oneDriveStore.refreshToken()
+        if (clientId.isBlank() || refreshToken == null) return@withLock
+        val synced = oneDriveStore.syncedIds()
+        val pending = PodAnswerExport.exportable(_state.value.records).filter { it.id !in synced }
+        if (pending.isEmpty()) return@withLock
+        try {
+            withContext(Dispatchers.IO) {
+                val token = accessToken(clientId, refreshToken)
+                pending.forEach { record ->
+                    oneDrive.upload(token, PodAnswerExport.syncFileName(record), PodAnswerExport.toJson(listOf(record)))
+                    oneDriveStore.markSynced(record.id)
+                }
+            }
+            setOneDriveStatus(if (pending.size == 1) "1 Analyse mit OneDrive synchronisiert." else "${pending.size} Analysen mit OneDrive synchronisiert.")
+        } catch (t: Throwable) {
+            setOneDriveStatus("OneDrive-Sync fehlgeschlagen: ${readableError(t)} Wird beim nächsten Start erneut versucht.")
+        }
+    }
+
+    private fun accessToken(clientId: String, refreshToken: String): String {
+        oneDriveAccessToken?.takeIf { System.currentTimeMillis() < oneDriveAccessExpiry }?.let { return it }
+        val tokens = oneDrive.refresh(clientId, refreshToken)
+        tokens.refreshToken?.let(oneDriveStore::saveRefreshToken)
+        cacheAccessToken(tokens)
+        return tokens.accessToken
+    }
+
+    private fun cacheAccessToken(tokens: OneDriveClient.Tokens) {
+        oneDriveAccessToken = tokens.accessToken
+        oneDriveAccessExpiry = System.currentTimeMillis() + (tokens.expiresInSeconds - 120).coerceAtLeast(60) * 1000L
+    }
+
+    private fun setOneDriveStatus(message: String) = _state.update { it.copy(oneDriveStatus = message) }
 
     fun receive(intent: Intent?) {
         if (intent?.action != Intent.ACTION_SEND) return
@@ -141,6 +244,8 @@ class PodAnswerViewModel(application: Application) : AndroidViewModel(applicatio
             }
             updateRecord(id) { it.copy(analysis = analysis, stage = JobStage.COMPLETE, error = null) }
             _state.update { it.copy(busyStage = JobStage.COMPLETE, busyMessage = "Analyse abgeschlossen") }
+            oneDriveStore.markUnsynced(id)
+            syncPending()
         } catch (throwable: Throwable) {
             updateRecord(id) { it.copy(stage = JobStage.ERROR, error = readableError(throwable)) }
             _state.update { it.copy(busyStage = JobStage.ERROR, busyMessage = readableError(throwable)) }

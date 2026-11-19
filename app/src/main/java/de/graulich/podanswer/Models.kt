@@ -62,6 +62,8 @@ enum class ThinkingLevel(val apiValue: String, val label: String, val descriptio
     }
 }
 
+data class OneDriveLogin(val userCode: String, val verificationUri: String)
+
 data class AppState(
     val records: List<EpisodeRecord> = emptyList(),
     val selectedId: String? = null,
@@ -73,4 +75,8 @@ data class AppState(
     val interestingFactsEnabled: Boolean = false,
     val thinkingLevel: ThinkingLevel = ThinkingLevel.LOW,
     val settingsOpen: Boolean = false,
+    val oneDriveClientId: String = "",
+    val oneDriveConnected: Boolean = false,
+    val oneDriveStatus: String = "",
+    val oneDriveLogin: OneDriveLogin? = null,
 )
